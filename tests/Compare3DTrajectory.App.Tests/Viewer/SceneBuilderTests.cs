@@ -96,6 +96,22 @@ public class SceneBuilderTests
         scene.Markers.Select(marker => marker.IsSquare).Should().Equal(false, true);
     }
 
+    /// <summary>
+    /// F52: a point out at 1e39 metres overflows float, and the grid loop stepped towards infinity,
+    /// or stood still at a value too large for one more step to change, until memory ran out.
+    /// </summary>
+    [Fact]
+    public async Task Build_PointBeyondTheRangeOfFloat_StillFinishesWithABoundedGrid()
+    {
+        Vec3[] points = [.. ReferencePoints, new Vec3(1e39, 1e39, 1e39)];
+        var reference = new SceneTrajectory(points, null, Colors.Blue, IsReference: true, IsSelected: false, index => $"reference {index}");
+
+        SceneModel scene = await Task.Run(() => SceneBuilder.Build([reference], [], ColourMode.Deviation, 2, Palette))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        scene.Lines.Single(line => line.IsSegments).Positions.Count.Should().BeLessThan(1000);
+    }
+
     [Theory]
     [InlineData(0.3, 0.2)]
     [InlineData(1.2, 1)]

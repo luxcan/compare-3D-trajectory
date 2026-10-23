@@ -14,23 +14,21 @@ public static class CoordinateKindDetector
 
     public const double MaximumGeocentricRadius = 6_450_000;
 
+    /// <summary>
+    /// Geocentric when most of the points lie in the shell. Deciding by the bulk means a few unset
+    /// rows, such as a WorldLocation of 0, 0, 0 before an entity is placed, cannot turn a whole
+    /// geocentric file local; the loader skips those rows instead.
+    /// </summary>
     public static CoordinateKind Detect(IReadOnlyList<Vec3> points)
     {
         ArgumentNullException.ThrowIfNull(points);
-        if (points.Count == 0)
-        {
-            return CoordinateKind.Local;
-        }
+        int inShell = points.Count(IsInShell);
+        return 2 * inShell > points.Count ? CoordinateKind.Geocentric : CoordinateKind.Local;
+    }
 
-        foreach (Vec3 point in points)
-        {
-            double radius = point.Length;
-            if (radius < MinimumGeocentricRadius || radius > MaximumGeocentricRadius)
-            {
-                return CoordinateKind.Local;
-            }
-        }
-
-        return CoordinateKind.Geocentric;
+    public static bool IsInShell(Vec3 point)
+    {
+        double radius = point.Length;
+        return radius >= MinimumGeocentricRadius && radius <= MaximumGeocentricRadius;
     }
 }

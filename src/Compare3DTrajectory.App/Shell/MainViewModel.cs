@@ -424,16 +424,23 @@ public sealed partial class MainViewModel : ObservableObject
         StatusText = $"Comparing {Measure.Plural(runs.Count, "run")} with {reference.Name}…";
         try
         {
-            ComparisonResult[] results = await Task.WhenAll(runs.Select(run =>
+            (ComparisonResult? Result, string? Failure)[] outcomes = await Task.WhenAll(runs.Select(run =>
             {
                 PreparedTrajectory runPath = run.Prepared!;
-                return Task.Run(() => _engine.Compare(referencePath, runPath, settings, fitHeading, token), token);
+                return Task.Run(() => CompareOne(referencePath, runPath, settings, fitHeading, token), token);
             }));
             token.ThrowIfCancellationRequested();
 
             for (int i = 0; i < runs.Count; i++)
             {
-                runs[i].ShowResult(results[i], settings.Tolerance);
+                if (outcomes[i].Result is { } result)
+                {
+                    runs[i].ShowResult(result, settings.Tolerance);
+                }
+                else
+                {
+                    runs[i].ShowFailure(outcomes[i].Failure!);
+                }
             }
 
             RebuildIssuesAndScene();
@@ -459,6 +466,27 @@ public sealed partial class MainViewModel : ObservableObject
                 _comparison = null;
                 IsBusy = false;
             }
+        }
+    }
+
+    /// <summary>
+    /// One run against the reference. A run that cannot be compared is reported on its own row, so
+    /// it never takes the other runs, or the 3D view, down with it.
+    /// </summary>
+    private (ComparisonResult? Result, string? Failure) CompareOne(
+        PreparedTrajectory reference,
+        PreparedTrajectory run,
+        ComparisonSettings settings,
+        bool fitHeading,
+        CancellationToken token)
+    {
+        try
+        {
+            return (_engine.Compare(reference, run, settings, fitHeading, token), null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return (null, exception.Message);
         }
     }
 
@@ -510,7 +538,18 @@ public sealed partial class MainViewModel : ObservableObject
                     item.DescribePoint)),
         ];
         List<SceneIssue> issues = [.. Issues.Select(row => new SceneIssue(row.Number, row.Issue, row == SelectedIssue))];
-        Scene = SceneBuilder.Build(trajectories, issues, SelectedColourMode.Mode, Tolerance, _palette);
+
+        // Redrawing follows a click or a toggle, far from any handler that could show a failure, so
+        // one is shown here rather than left to escape as a crash.
+        try
+        {
+            Scene = SceneBuilder.Build(trajectories, issues, SelectedColourMode.Mode, Tolerance, _palette);
+        }
+        catch (Exception exception)
+        {
+            Scene = SceneModel.Empty;
+            StatusText = $"The 3D view could not be drawn: {exception.Message}";
+        }
     }
 
     private void Focus(TrajectoryIssue issue)
@@ -546,6 +585,13 @@ public sealed partial class MainViewModel : ObservableObject
         int runs = Trajectories.Count(item => item != Reference && item.Result is not null);
         StatusText = $"Reference {Reference.Name} · {Measure.Plural(runs, "run")} compared · "
             + $"{Measure.Plural(Issues.Count, "issue")} · tolerance {Measure.Metres(Tolerance)}";
+
+        List<TrajectoryItemViewModel> failed = [.. Trajectories.Where(item => item.ComparisonFailure is not null)];
+        if (failed.Count > 0)
+        {
+            string which = failed.Count == 1 ? failed[0].Name : Measure.Plural(failed.Count, "run");
+            StatusText += $" · {which} could not be compared";
+        }
     }
 
     private void SaveSettings()

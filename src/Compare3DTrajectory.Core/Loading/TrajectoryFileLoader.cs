@@ -1,4 +1,4 @@
-using Compare3DTrajectory.Core.Geo;
+using System.Xml;
 using ExcelDataReader.Exceptions;
 
 namespace Compare3DTrajectory.Core.Loading;
@@ -34,7 +34,8 @@ public static class TrajectoryFileLoader
                 : ExcelTableReader.ReadFile(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-                                          or ExcelReaderException or InvalidDataException or NotSupportedException)
+                                          or ExcelReaderException or InvalidDataException or NotSupportedException
+                                          or XmlException)
         {
             return Failure(fileName, path, exception.Message);
         }
@@ -74,7 +75,7 @@ public static class TrajectoryFileLoader
                 parsed.SkippedRows,
                 parsed.ColumnDescription,
                 parsed.Note,
-                CoordinateKindDetector.Detect(parsed.Points)));
+                parsed.DetectedKind));
         }
 
         return new FileLoadResult(trajectories, failures);

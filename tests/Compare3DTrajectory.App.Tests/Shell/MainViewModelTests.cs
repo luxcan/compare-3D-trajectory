@@ -3,6 +3,8 @@ using Compare3DTrajectory.App.Settings;
 using Compare3DTrajectory.App.Shell;
 using Compare3DTrajectory.App.Viewer;
 using Compare3DTrajectory.Core.Alignment;
+using Compare3DTrajectory.Core.Comparison;
+using Compare3DTrajectory.Core.Geometry;
 
 namespace Compare3DTrajectory.App.Tests.Shell;
 
@@ -99,6 +101,24 @@ public sealed class MainViewModelTests : IDisposable
         Item(viewModel, "model.csv").Result.Should().NotBeNull();
         good.VerdictText.Should().Be("Reference");
         viewModel.Issues.Should().OnlyContain(row => row.FileName != "run-good.csv");
+    }
+
+    /// <summary>F54: one run that could not be compared used to fail every run and leave the view empty.</summary>
+    [Fact]
+    public async Task CompareAsync_OneRunFails_TheOthersAreStillComparedAndDrawn()
+    {
+        MainViewModel viewModel = await LoadedSamples();
+        TrajectoryItemViewModel broken = Item(viewModel, "run-detour.csv");
+        broken.Prepared = new PreparedTrajectory(broken.Id, [new Vec3(0, 0, 0), new Vec3(double.NaN, 0, 0), new Vec3(1, 1, 1)]);
+
+        viewModel.ToleranceText = "3";
+        await viewModel.CurrentComparison;
+
+        broken.VerdictText.Should().StartWith("Comparison failed: ");
+        Item(viewModel, "run-good.csv").VerdictText.Should().Be("✓ Follows the reference within 3.00 m");
+        viewModel.Issues.Should().Contain(row => row.FileName == "run-cut-corner.tsv");
+        viewModel.Scene.IsEmpty.Should().BeFalse();
+        viewModel.StatusText.Should().StartWith("Reference model.csv · 3 runs compared").And.EndWith(" · run-detour.csv could not be compared");
     }
 
     [Fact]

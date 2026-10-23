@@ -107,10 +107,14 @@ public sealed partial class TrajectoryItemViewModel : ObservableObject
         ? "Treat as local x, y, z (metres, Z up)"
         : "Treat as geocentric (ECEF, HLA WorldLocation)";
 
+    /// <summary>Why the last comparison of this run failed; null when it did not.</summary>
+    public string? ComparisonFailure { get; private set; }
+
     /// <summary>Shows this row as the one the others are measured against.</summary>
     public void ShowAsReference()
     {
         Result = null;
+        ComparisonFailure = null;
         VerdictText = "Reference";
         HasIssues = false;
         FiguresText = null;
@@ -121,6 +125,7 @@ public sealed partial class TrajectoryItemViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(result);
         Result = result;
+        ComparisonFailure = null;
         VerdictText = ResultText.Verdict(result, tolerance);
         HasIssues = result.Issues.Count > 0;
         FiguresText = ResultText.Figures(result.Summary);
@@ -130,10 +135,18 @@ public sealed partial class TrajectoryItemViewModel : ObservableObject
     public void ShowNotCompared(string reason)
     {
         Result = null;
+        ComparisonFailure = null;
         VerdictText = reason;
         HasIssues = false;
         FiguresText = null;
         AlignmentText = null;
+    }
+
+    /// <summary>Shows that this run, and only this run, could not be compared, and why.</summary>
+    public void ShowFailure(string reason)
+    {
+        ShowNotCompared($"Comparison failed: {reason}");
+        ComparisonFailure = reason;
     }
 
     /// <summary>The points to draw: after the fit once compared, as loaded before that.</summary>

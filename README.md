@@ -40,11 +40,16 @@ exactly as recorded.
   first line, and so is one where two columns could be the same axis.
 - **One entity per file:** a file whose Entity, Marking or similar column holds several entities is
   refused, since one path through all of them would zig-zag between them.
-- **Bad rows:** rows that are not numbers, or that have more cells than the header, are skipped, and
-  the file's row says which lines they were.
-- **Coordinates:** geocentric (ECEF) metres, the HLA RPR FOM `WorldLocation`, are recognised
-  automatically. They are compared in a local East-North-Up frame, so "up" is the true vertical. Any
-  other file is read as metres with Z up. A file's right-click menu switches between the two.
+- **Bad rows:** skipped and listed by line on the file's row: rows that are not numbers or have more
+  cells than the header, and rows that cannot be a position, such as an unset value (`1.79769E+308`),
+  a no-data marker (`-9999, -9999, -9999`), a geocentric `0, 0, 0`, or a glitch row that jumps off
+  the path and straight back.
+- **Coordinates:** geocentric (ECEF) metres, such as the HLA RPR FOM `WorldLocation`, are recognised
+  automatically when most rows lie on or near the Earth's surface. They are compared in a local
+  East-North-Up frame, so "up" is the true vertical. Any other file is read as metres with Z up. A
+  file's right-click menu switches between the two.
+- **One run at a time:** a run that cannot be compared says so on its own row; the others are still
+  compared and drawn.
 
 Drop files or whole folders onto the window, use **Add files…**, or pass paths on the command line.
 `samples/` holds a model and four runs with known faults to try it on.

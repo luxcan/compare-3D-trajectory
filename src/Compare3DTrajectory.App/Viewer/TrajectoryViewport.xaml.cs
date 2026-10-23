@@ -124,7 +124,8 @@ public partial class TrajectoryViewport : UserControl
         HoverCard.Visibility = Visibility.Collapsed;
         SceneModel scene = Scene;
 
-        foreach (SceneLine line in scene.Lines)
+        // A line needs two positions; the grid has none when the scene's extent is too large to draw one.
+        foreach (SceneLine line in scene.Lines.Where(line => line.Positions.Count >= 2))
         {
             var model = new LineGeometryModel3D
             {

@@ -123,17 +123,24 @@ public static partial class TrajectoryTableParser
             }
         }
 
+        PositionScreen.Screened screened = PositionScreen.Screen(points, lineNumbers);
+        List<SkippedRow> allSkipped = [.. skipped.Concat(screened.Skipped).OrderBy(row => row.LineNumber)];
+
         string? failure = null;
-        if (points.Count < 2)
+        int count = screened.Points.Count;
+        if (count < 2)
         {
-            failure = $"Only {points.Count} readable point{(points.Count == 1 ? string.Empty : "s")}; a trajectory needs at least two.";
-            if (skipped.Count > 0)
+            failure = $"Only {count} readable point{(count == 1 ? string.Empty : "s")}; a trajectory needs at least two.";
+            if (allSkipped.Count > 0)
             {
-                failure += $" Line {skipped[0].LineNumber}: {skipped[0].Reason}.";
+                failure += $" Line {allSkipped[0].LineNumber}: {allSkipped[0].Reason}.";
             }
         }
 
-        return new TableParseResult(points, lineNumbers, skipped, choice.Description, note, failure);
+        return new TableParseResult(screened.Points, screened.LineNumbers, allSkipped, choice.Description, note, failure)
+        {
+            DetectedKind = screened.Kind,
+        };
     }
 
     /// <summary>
