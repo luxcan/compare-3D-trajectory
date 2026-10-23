@@ -61,6 +61,26 @@ public class CameraFramingTests
         }
     }
 
+    /// <summary>
+    /// Seen on screen: the legend is drawn over the bottom of the view, and the near end of a route,
+    /// with its start marker, was framed underneath it.
+    /// </summary>
+    [Theory]
+    [InlineData(0.1)]
+    [InlineData(0.2)]
+    public void Frame_WithTheBottomOfTheViewCovered_KeepsEveryPointAboveIt(double covered)
+    {
+        Vector3[] leg = [.. Enumerable.Range(0, 101).Select(i => new Vector3(0, -5000 + (100 * i), 0))];
+
+        CameraPlacement placement = CameraFraming.FitAll(leg, StartingLook, ModelUp, FieldOfView, 895.0 / 460, covered);
+
+        foreach (Vector3 point in leg)
+        {
+            (_, double y) = Project(placement, point, 895.0 / 460);
+            y.Should().BeInRange(-1 + (2 * covered), 1);
+        }
+    }
+
     [Fact]
     public void Frame_Box_FillsMostOfTheView()
     {

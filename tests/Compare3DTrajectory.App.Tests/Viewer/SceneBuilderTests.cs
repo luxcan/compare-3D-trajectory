@@ -112,6 +112,23 @@ public class SceneBuilderTests
         scene.Lines.Single(line => line.IsSegments).Positions.Count.Should().BeLessThan(1000);
     }
 
+    /// <summary>
+    /// Seen on screen: a straight leg running due north has no width, so every grid line across it
+    /// had no length, and the view showed no ground at all.
+    /// </summary>
+    [Fact]
+    public void Build_StraightLegDueNorth_StillHasAGroundOfSomeWidth()
+    {
+        Vec3[] leg = [new(0, -5000, 0), new(0, 0, 0), new(0, 5000, 0)];
+        var reference = new SceneTrajectory(leg, null, Colors.Blue, IsReference: true, IsSelected: false, index => $"reference {index}");
+
+        SceneModel scene = SceneBuilder.Build([reference], [], ColourMode.Deviation, 2, Palette);
+
+        SceneLine grid = scene.Lines.Single(line => line.IsSegments);
+        float width = grid.Positions.Max(position => position.X) - grid.Positions.Min(position => position.X);
+        width.Should().BeGreaterThanOrEqualTo((float)(4 * scene.GridSpacing));
+    }
+
     [Theory]
     [InlineData(0.3, 0.2)]
     [InlineData(1.2, 1)]

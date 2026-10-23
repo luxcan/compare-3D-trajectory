@@ -28,6 +28,9 @@ public static class SceneBuilder
     /// <summary>A round spacing gives a dozen lines at most; anything near this is an extent float cannot hold.</summary>
     private const int MaximumGridLines = 100;
 
+    /// <summary>How many grid squares the ground reaches to each side of the scene's middle, at the least.</summary>
+    private const int GridReach = 2;
+
     public static SceneModel Build(
         IReadOnlyList<SceneTrajectory> trajectories,
         IReadOnlyList<SceneIssue> issues,
@@ -115,11 +118,16 @@ public static class SceneBuilder
             max = Vector3.Max(max, position);
         }
 
+        // A route running straight along an axis has no width across it; the grid still reaches a
+        // couple of squares to either side, or every line across it would have no length.
         double spacing = NiceStep(Math.Max(max.X - min.X, max.Y - min.Y) / TargetGridLines);
-        double fromX = Math.Floor(min.X / spacing) * spacing;
-        double toX = Math.Ceiling(max.X / spacing) * spacing;
-        double fromY = Math.Floor(min.Y / spacing) * spacing;
-        double toY = Math.Ceiling(max.Y / spacing) * spacing;
+        double reach = GridReach * spacing;
+        double middleX = (min.X + max.X) / 2.0;
+        double middleY = (min.Y + max.Y) / 2.0;
+        double fromX = Math.Floor(Math.Min(min.X, middleX - reach) / spacing) * spacing;
+        double toX = Math.Ceiling(Math.Max(max.X, middleX + reach) / spacing) * spacing;
+        double fromY = Math.Floor(Math.Min(min.Y, middleY - reach) / spacing) * spacing;
+        double toY = Math.Ceiling(Math.Max(max.Y, middleY + reach) / spacing) * spacing;
         double columns = Math.Round((toX - fromX) / spacing);
         double rows = Math.Round((toY - fromY) / spacing);
         if (!(min.X <= max.X && columns <= MaximumGridLines && rows <= MaximumGridLines))

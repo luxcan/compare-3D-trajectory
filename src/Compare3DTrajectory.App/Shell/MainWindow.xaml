@@ -259,10 +259,14 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
-          <viewer:TrajectoryViewport x:Name="Viewport" Scene="{Binding Scene}" />
+          <!-- The legend is drawn over the bottom of the view, so framing keeps the route above it. -->
+          <viewer:TrajectoryViewport x:Name="Viewport"
+                                     Scene="{Binding Scene}"
+                                     CoveredBelow="{Binding ActualHeight, ElementName=Legend}" />
 
           <!-- Legend: what the colours and dots mean, at the tolerance in force. -->
-          <Border HorizontalAlignment="Left"
+          <Border x:Name="Legend"
+                  HorizontalAlignment="Left"
                   VerticalAlignment="Bottom"
                   Margin="10"
                   Padding="10,6"

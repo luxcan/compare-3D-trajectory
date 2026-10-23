@@ -27,6 +27,22 @@ public partial class TrajectoryViewport : UserControl
         typeof(TrajectoryViewport),
         new PropertyMetadata(SceneModel.Empty, (d, _) => ((TrajectoryViewport)d).Rebuild()));
 
+    /// <summary>
+    /// How many pixels at the bottom of the view are covered by something drawn over it, such as the
+    /// legend; framing keeps what it frames above them.
+    /// </summary>
+    public static readonly DependencyProperty CoveredBelowProperty = DependencyProperty.Register(
+        nameof(CoveredBelow),
+        typeof(double),
+        typeof(TrajectoryViewport),
+        new PropertyMetadata(0.0));
+
+    /// <summary>
+    /// Added to <see cref="CoveredBelow"/>: the legend's 10-pixel margin below it, and a little room
+    /// between it and what is framed.
+    /// </summary>
+    private const double CoverClearance = 18;
+
     private const double ZoomMilliseconds = 400;
     private const double HoverHitThickness = 8;
 
@@ -63,13 +79,19 @@ public partial class TrajectoryViewport : UserControl
         set => SetValue(SceneProperty, value);
     }
 
+    public double CoveredBelow
+    {
+        get => (double)GetValue(CoveredBelowProperty);
+        set => SetValue(CoveredBelowProperty, value);
+    }
+
     /// <summary>Frames everything drawn, keeping the current viewing direction.</summary>
     public void FitAll()
     {
         Vector3[] drawn = [.. Scene.Lines.Where(line => !line.IsSegments).SelectMany(line => line.Positions)];
         if (drawn.Length > 0 && View.Camera is ProjectionCamera camera)
         {
-            MoveTo(camera, CameraFraming.FitAll(drawn, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight));
+            MoveTo(camera, CameraFraming.FitAll(drawn, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight, ShareCovered));
         }
     }
 
@@ -78,11 +100,13 @@ public partial class TrajectoryViewport : UserControl
     {
         if (View.Camera is ProjectionCamera camera)
         {
-            MoveTo(camera, CameraFraming.Focus(min, max, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight));
+            MoveTo(camera, CameraFraming.Focus(min, max, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight, ShareCovered));
         }
     }
 
     private double WidthOverHeight => View.ActualWidth > 0 && View.ActualHeight > 0 ? View.ActualWidth / View.ActualHeight : 1;
+
+    private double ShareCovered => CoveredBelow > 0 && View.ActualHeight > 0 ? (CoveredBelow + CoverClearance) / View.ActualHeight : 0;
 
     private static double FieldOfView(ProjectionCamera camera) => camera is PerspectiveCamera perspective ? perspective.FieldOfView : 45;
 

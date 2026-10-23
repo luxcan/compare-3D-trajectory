@@ -26,12 +26,31 @@ public static class CameraFraming
     /// <summary>Within a degree of straight down or up, Z cannot serve as the up direction.</summary>
     private static readonly double NearlyVertical = Math.Cos(Math.PI / 180);
 
-    /// <summary>Frames every point drawn.</summary>
-    public static CameraPlacement FitAll(IReadOnlyList<Vector3> points, Vector3D look, Vector3D up, double verticalFieldOfViewDegrees, double widthOverHeight) =>
-        Frame(points, look, up, verticalFieldOfViewDegrees, widthOverHeight);
+    /// <summary>The most of the view's height that may be counted as covered at the bottom.</summary>
+    private const double MostCovered = 0.4;
 
-    /// <summary>Frames one box, by its eight corners.</summary>
-    public static CameraPlacement Focus(Vector3 min, Vector3 max, Vector3D look, Vector3D up, double verticalFieldOfViewDegrees, double widthOverHeight)
+    /// <summary>
+    /// Frames every point drawn, above the share <paramref name="coveredBelow"/> of the view's height
+    /// that the legend covers at the bottom.
+    /// </summary>
+    public static CameraPlacement FitAll(
+        IReadOnlyList<Vector3> points,
+        Vector3D look,
+        Vector3D up,
+        double verticalFieldOfViewDegrees,
+        double widthOverHeight,
+        double coveredBelow = 0) =>
+        Frame(points, look, up, verticalFieldOfViewDegrees, widthOverHeight, coveredBelow);
+
+    /// <summary>Frames one box, by its eight corners, above what the legend covers.</summary>
+    public static CameraPlacement Focus(
+        Vector3 min,
+        Vector3 max,
+        Vector3D look,
+        Vector3D up,
+        double verticalFieldOfViewDegrees,
+        double widthOverHeight,
+        double coveredBelow = 0)
     {
         Vector3[] corners =
         [
@@ -40,10 +59,23 @@ public static class CameraFraming
                from z in new[] { min.Z, max.Z }
                select new Vector3(x, y, z),
         ];
-        return Frame(corners, look, up, verticalFieldOfViewDegrees, widthOverHeight);
+        return Frame(corners, look, up, verticalFieldOfViewDegrees, widthOverHeight, coveredBelow);
     }
 
-    private static CameraPlacement Frame(IReadOnlyList<Vector3> points, Vector3D look, Vector3D up, double verticalFieldOfViewDegrees, double widthOverHeight)
+    /// <remarks>
+    /// The camera may be moved up or down on screen as well as back, so the points can sit in a band
+    /// that is not centred on the view, here the part the legend leaves clear. For a camera moved back
+    /// <c>d</c> and down <c>s</c>, each point needs <c>d</c> at least a line in <c>s</c> rising (to keep
+    /// it below the top edge) or falling (above the bottom one); the least <c>d</c> is where the
+    /// highest rising line meets the highest falling one, unless the sides or depth ask for more.
+    /// </remarks>
+    private static CameraPlacement Frame(
+        IReadOnlyList<Vector3> points,
+        Vector3D look,
+        Vector3D up,
+        double verticalFieldOfViewDegrees,
+        double widthOverHeight,
+        double coveredBelow)
     {
         ArgumentNullException.ThrowIfNull(points);
         Vector3D forward = look;
@@ -53,19 +85,30 @@ public static class CameraFraming
         right.Normalize();
         Vector3D upward = Vector3D.CrossProduct(right, forward);
 
+        // The band points must stay in, from -1 at the bottom of the view to 1 at the top.
+        double tan = Math.Tan(verticalFieldOfViewDegrees * Math.PI / 360);
+        double top = tan / Margin;
+        double bottom = tan * ((1 / Margin) - (2 * Math.Clamp(coveredBelow, 0, MostCovered)));
+        double tanHorizontal = tan * widthOverHeight / Margin;
+
         Point3D centre = Centre(points);
-        double tanVertical = Math.Tan(verticalFieldOfViewDegrees * Math.PI / 360) / Margin;
-        double tanHorizontal = tanVertical * widthOverHeight;
+        double belowTop = double.NegativeInfinity;
+        double aboveBottom = double.NegativeInfinity;
         double distance = ShortestDistance;
         foreach (Vector3 point in points)
         {
             Vector3D offset = new Point3D(point.X, point.Y, point.Z) - centre;
-            double across = Math.Abs(Vector3D.DotProduct(offset, right)) / tanHorizontal;
-            double above = Math.Abs(Vector3D.DotProduct(offset, upward)) / tanVertical;
-            distance = Math.Max(distance, Math.Max(NearestDepth, Math.Max(across, above)) - Vector3D.DotProduct(offset, forward));
+            double along = Vector3D.DotProduct(offset, forward);
+            double height = Vector3D.DotProduct(offset, upward);
+            belowTop = Math.Max(belowTop, (height / top) - along);
+            aboveBottom = Math.Max(aboveBottom, (-height / bottom) - along);
+            distance = Math.Max(distance, Math.Max(NearestDepth, Math.Abs(Vector3D.DotProduct(offset, right)) / tanHorizontal) - along);
         }
 
-        return new CameraPlacement(centre - (forward * distance), forward * distance, screenUp);
+        double shift = (belowTop - aboveBottom) / ((1 / top) + (1 / bottom));
+        distance = Math.Max(distance, belowTop - (shift / top));
+        Point3D target = centre + (upward * shift);
+        return new CameraPlacement(target - (forward * distance), forward * distance, screenUp);
     }
 
     /// <summary>
