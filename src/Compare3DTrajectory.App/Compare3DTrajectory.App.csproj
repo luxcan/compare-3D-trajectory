@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- The installed executable is Compare3DTrajectory.exe; the ".App" suffix only names the project. -->
+    <AssemblyName>Compare3DTrajectory</AssemblyName>
+    <RootNamespace>Compare3DTrajectory.App</RootNamespace>
+    <AssemblyTitle>Compare 3D Trajectory</AssemblyTitle>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- Release builds are what tools\install.ps1 publishes: one self-contained file, so the machine
+       needs no .NET install. Not trimmed: WPF breaks under trimming. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- The XML docs exist for IDE0005 at build time; nobody reads them next to an installed exe. -->
+    <PublishDocumentationFile>false</PublishDocumentationFile>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="HelixToolkit.Wpf.SharpDX" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Compare3DTrajectory.Core\Compare3DTrajectory.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Compare3DTrajectory.App.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,38 @@
+<Project>
+
+  <!-- The single place the product version is set. AssemblyVersion, FileVersion and
+       InformationalVersion are derived from it by the SDK, so they are not restated here. -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <Product>Compare 3D Trajectory</Product>
+    <Company>Compare3DTrajectory</Company>
+    <Authors>Internal</Authors>
+    <Copyright>© Internal</Copyright>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Required by dotnet_diagnostic.IDE0005.severity=error (roslyn#41640);
+         CS1591 must then be muted or every public type is an error. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- CA1707 forbids underscores; the house test name is Method_Condition_Expectation. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

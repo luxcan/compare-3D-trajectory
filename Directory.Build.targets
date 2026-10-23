@@ -1,0 +1,10 @@
+<Project>
+
+  <!-- UseWPF removes System.IO from the implicit usings, because WPF's own types would otherwise
+       collide with a few of its names. Nothing here collides, so put it back once rather than in
+       every file that touches a path. -->
+  <ItemGroup Condition="'$(UseWPF)' == 'true' and '$(ImplicitUsings)' == 'enable'">
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

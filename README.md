@@ -1,0 +1,64 @@
+# Compare 3D Trajectory
+
+A Windows desktop app for checking a simulation run against the trajectory it was meant to follow.
+Load any number of CSV or Excel files of world x, y, z. Pick one as the reference. Every other file
+is lined up with it and compared in a 3D view you can turn and zoom, and every place a run went wrong
+is listed.
+
+## What it finds
+
+| Issue | Meaning |
+| --- | --- |
+| **Detour** | The run left the reference path by more than the tolerance and came back. |
+| **Off path at start / end** | The run began or finished away from the reference path. |
+| **Missed** | A stretch of the reference the run never came within tolerance of, such as a cut corner. |
+
+Runs are coloured point by point: green within tolerance, amber up to twice it, red beyond.
+Selecting an issue zooms the view to it. Hovering a line shows the point's line number in its file,
+its original x, y, z and, for geocentric files, its latitude, longitude and height.
+
+## Lining runs up
+
+With **Fit position and heading** on, each run is first moved and turned about the vertical to fit
+the reference best, so only differences of shape are reported. It is never tilted or scaled, so a
+left turn can never be fitted onto a right turn. Each row says how far its run was moved and turned,
+so a run that was simply in the wrong place is still visible. Turn the fit off to compare positions
+exactly as recorded.
+
+## Files
+
+- **Formats:** `.csv`, `.txt` or `.tsv` text, or `.xlsx`, `.xlsm` and `.xls` workbooks. Every sheet
+  of a workbook with points on it becomes its own trajectory. Excel does not need to be installed.
+- **Layout:** comma, semicolon, tab, `|` or space separated, found automatically. A header row is
+  optional.
+- **Choosing x, y and z:** taken from columns named for them, such as `x`, `pos_x`, `PositionX`,
+  `WorldLocation.X` or `World Location X`. Position columns win over velocity or angle columns.
+  Without such names, the first three numeric columns are used.
+- **Bad rows:** rows that are not numbers are skipped, and the file's row says which lines they were.
+- **Coordinates:** geocentric (ECEF) metres, the HLA RPR FOM `WorldLocation`, are recognised
+  automatically. They are compared in a local East-North-Up frame, so "up" is the true vertical. Any
+  other file is read as metres with Z up. A file's right-click menu switches between the two.
+
+Drop files or whole folders onto the window, use **Add files…**, or pass paths on the command line.
+`samples/` holds a model and four runs with known faults to try it on.
+
+## Install
+
+```powershell
+.\tools\install.ps1
+```
+
+Publishes a single self-contained `Compare3DTrajectory.exe` (no .NET install needed) to
+`%LOCALAPPDATA%\Programs\Compare3DTrajectory` and adds **Compare 3D Trajectory** to the Start menu.
+`-Uninstall` removes it again. Settings are kept in `%LOCALAPPDATA%\Compare3DTrajectory`.
+
+## Develop
+
+```powershell
+dotnet test
+```
+
+- **`src/Compare3DTrajectory.Core`:** loading, geodesy, alignment and comparison. Plain .NET with no
+  UI, and fully unit-tested.
+- **`src/Compare3DTrajectory.App`:** the WPF window, with HelixToolkit for the 3D view.
+- **Regenerating the samples:** run `dotnet test` with `COMPARE3DTRAJECTORY_WRITE_SAMPLES=1` set.

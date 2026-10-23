@@ -1,0 +1,8 @@
+# Normalise text in the repository to LF; check out native.
+* text=auto
+
+# Sample data and Excel fixtures are bytes the tests read back exactly.
+*.xlsx binary
+*.xls binary
+*.ico binary
+*.png binary

@@ -1,0 +1,356 @@
+<Window x:Class="Compare3DTrajectory.App.Shell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:viewer="clr-namespace:Compare3DTrajectory.App.Viewer"
+        Title="Compare 3D Trajectory"
+        Width="1280"
+        Height="800"
+        MinWidth="960"
+        MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource AppBackground}"
+        Foreground="{DynamicResource TextPrimary}"
+        AllowDrop="True"
+        DragOver="OnDragOver"
+        Drop="OnFilesDropped">
+
+  <Window.Resources>
+    <!-- A line that is only there when it has something to say. -->
+    <Style x:Key="OptionalMutedText" TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Style.Triggers>
+        <Trigger Property="Text" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </Trigger>
+        <Trigger Property="Text" Value="">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="LegendSwatch" TargetType="Rectangle">
+      <Setter Property="Width" Value="14" />
+      <Setter Property="Height" Value="4" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="LegendText" TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+      <Setter Property="Margin" Value="0,0,14,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- ============================== Command bar ============================== -->
+    <Border Grid.Row="0"
+            Background="{DynamicResource SurfaceAltBackground}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="0,0,0,1"
+            Padding="12,9">
+      <DockPanel LastChildFill="False">
+        <Button DockPanel.Dock="Left"
+                Style="{StaticResource PrimaryButton}"
+                Content="Add files…"
+                Command="{Binding AddFilesCommand}"
+                ToolTip="Add CSV or Excel files of x, y, z. You can also drop files or folders on the window." />
+        <Button DockPanel.Dock="Left"
+                Style="{StaticResource SecondaryButton}"
+                Content="Clear"
+                Command="{Binding ClearCommand}"
+                ToolTip="Remove every file from the comparison" />
+
+        <Rectangle DockPanel.Dock="Left" Style="{StaticResource ToolbarSeparator}" />
+
+        <TextBlock DockPanel.Dock="Left" Text="Tolerance" VerticalAlignment="Center" Margin="0,0,8,0" />
+        <TextBox x:Name="ToleranceBox"
+                 DockPanel.Dock="Left"
+                 Width="64"
+                 AutomationProperties.Name="Tolerance in metres"
+                 Text="{Binding ToleranceText, UpdateSourceTrigger=PropertyChanged}"
+                 ToolTip="How far, in metres, a point may be from the other path and still count as on it" />
+        <TextBlock DockPanel.Dock="Left" Text="m" VerticalAlignment="Center" Margin="6,0,0,0" />
+        <TextBlock DockPanel.Dock="Left"
+                   Style="{StaticResource ErrorText}"
+                   Text="{Binding ToleranceError}"
+                   VerticalAlignment="Center"
+                   Margin="10,0,0,0" />
+
+        <Rectangle DockPanel.Dock="Left" Style="{StaticResource ToolbarSeparator}" />
+
+        <CheckBox DockPanel.Dock="Left"
+                  Content="Fit position and heading"
+                  IsChecked="{Binding FitHeading}"
+                  VerticalAlignment="Center"
+                  ToolTip="Line each run up with the reference first - a move plus a turn about the vertical, never a tilt - so only differences in shape are reported. Each row says how far its run was moved and turned." />
+
+        <Rectangle DockPanel.Dock="Left" Style="{StaticResource ToolbarSeparator}" />
+
+        <TextBlock DockPanel.Dock="Left" Text="Colour runs by" VerticalAlignment="Center" Margin="0,0,8,0" />
+        <ListBox DockPanel.Dock="Left"
+                 Style="{StaticResource SegmentedSelector}"
+                 ItemsSource="{Binding ColourModes}"
+                 SelectedItem="{Binding SelectedColourMode}" />
+
+        <Button DockPanel.Dock="Right"
+                Style="{StaticResource SecondaryButton}"
+                Content="Fit view"
+                Margin="0"
+                Command="{Binding FitViewCommand}"
+                ToolTip="Frame everything shown" />
+      </DockPanel>
+    </Border>
+
+    <!-- ============================== Files | view and issues ============================== -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="380" MinWidth="280" />
+        <ColumnDefinition Width="5" />
+        <ColumnDefinition Width="*" MinWidth="400" />
+      </Grid.ColumnDefinitions>
+
+      <DockPanel Grid.Column="0" Background="{DynamicResource SurfaceBackground}">
+        <!-- Files that could not be read stay listed, with the reason, until dismissed. -->
+        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Failures}" Margin="8,8,8,0">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Margin="0,0,0,6"
+                      Padding="9,6"
+                      BorderBrush="{DynamicResource ValidationError}"
+                      BorderThickness="2,0,0,0"
+                      Background="{DynamicResource SurfaceAltBackground}">
+                <DockPanel>
+                  <Button DockPanel.Dock="Right"
+                          Style="{StaticResource IconButton}"
+                          Content="&#xE711;"
+                          ToolTip="Dismiss"
+                          AutomationProperties.Name="Dismiss"
+                          Command="{Binding DataContext.DismissFailureCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          CommandParameter="{Binding}" />
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" />
+                    <TextBlock Style="{StaticResource ErrorText}" Text="{Binding Reason}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <Grid>
+          <ListBox x:Name="FileList"
+                   ItemsSource="{Binding Trajectories}"
+                   SelectedItem="{Binding SelectedTrajectory}"
+                   BorderThickness="0"
+                   Background="Transparent"
+                   HorizontalContentAlignment="Stretch"
+                   AutomationProperties.Name="Files">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="0,4"
+                      Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}">
+                  <Grid.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="{Binding KindMenuText}"
+                                Command="{Binding PlacementTarget.Tag.ToggleCoordinateKindCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                CommandParameter="{Binding}" />
+                      <MenuItem Header="Remove from the comparison"
+                                Command="{Binding PlacementTarget.Tag.RemoveTrajectoryCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                CommandParameter="{Binding}" />
+                    </ContextMenu>
+                  </Grid.ContextMenu>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+
+                  <CheckBox Grid.Column="0"
+                            IsChecked="{Binding IsVisible}"
+                            VerticalAlignment="Center"
+                            ToolTip="Show or hide in the 3D view"
+                            AutomationProperties.Name="{Binding Name, StringFormat='Show {0}'}" />
+                  <Rectangle Grid.Column="1"
+                             Width="12"
+                             Height="12"
+                             Margin="8,0"
+                             RadiusX="2"
+                             RadiusY="2"
+                             VerticalAlignment="Center"
+                             Fill="{Binding ColourBrush}" />
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding Name}"
+                             FontWeight="SemiBold"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis"
+                             ToolTip="{Binding SourcePath}" />
+                  <RadioButton Grid.Column="3"
+                               GroupName="Reference"
+                               Content="Reference"
+                               Margin="8,0,4,0"
+                               IsChecked="{Binding IsReference}"
+                               ToolTip="Compare every other file against this one"
+                               AutomationProperties.Name="{Binding Name, StringFormat='Use {0} as reference'}" />
+                  <Button Grid.Column="4"
+                          Style="{StaticResource IconButton}"
+                          Content="&#xE711;"
+                          ToolTip="Remove from the comparison"
+                          AutomationProperties.Name="{Binding Name, StringFormat='Remove {0}'}"
+                          Command="{Binding DataContext.RemoveTrajectoryCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                          CommandParameter="{Binding}" />
+
+                  <StackPanel Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Margin="0,3,0,0">
+                    <TextBlock x:Name="Verdict" Text="{Binding VerdictText}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondary}" />
+                    <TextBlock Style="{StaticResource OptionalMutedText}" Text="{Binding FiguresText}" />
+                    <TextBlock Style="{StaticResource OptionalMutedText}" Text="{Binding AlignmentText}" />
+                    <TextBlock Style="{StaticResource OptionalMutedText}"
+                               Text="{Binding DetailText}"
+                               ToolTip="{Binding SkippedRowsToolTip}" />
+                  </StackPanel>
+                </Grid>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding HasIssues}" Value="True">
+                    <Setter TargetName="Verdict" Property="Foreground" Value="{DynamicResource DeviationBeyond}" />
+                  </DataTrigger>
+                  <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                      <Condition Binding="{Binding HasIssues}" Value="False" />
+                      <Condition Binding="{Binding IsCompared}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="Verdict" Property="Foreground" Value="{DynamicResource DeviationWithin}" />
+                  </MultiDataTrigger>
+                  <DataTrigger Binding="{Binding IsReference}" Value="True">
+                    <Setter TargetName="Verdict" Property="Foreground" Value="{DynamicResource TextPrimary}" />
+                  </DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <TextBlock Style="{StaticResource MutedText}"
+                     Margin="24"
+                     TextWrapping="Wrap"
+                     TextAlignment="Center"
+                     VerticalAlignment="Center"
+                     Visibility="{Binding HasTrajectories, Converter={StaticResource InverseBoolToVisibility}}"
+                     Text="Drop CSV or Excel files here, or use Add files. Each needs three numeric columns: world location x, y and z." />
+        </Grid>
+      </DockPanel>
+
+      <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" ResizeDirection="Columns" />
+
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*" MinHeight="200" />
+          <RowDefinition Height="5" />
+          <RowDefinition Height="230" MinHeight="90" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+          <viewer:TrajectoryViewport x:Name="Viewport" Scene="{Binding Scene}" />
+
+          <!-- Legend: what the colours and dots mean, at the tolerance in force. -->
+          <Border HorizontalAlignment="Left"
+                  VerticalAlignment="Bottom"
+                  Margin="10"
+                  Padding="10,6"
+                  Background="{DynamicResource SurfaceAltBackground}"
+                  BorderBrush="{DynamicResource Divider}"
+                  BorderThickness="1"
+                  CornerRadius="{DynamicResource ControlCornerRadius}"
+                  IsHitTestVisible="False"
+                  Visibility="{Binding HasTrajectories, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+              <StackPanel Orientation="Horizontal"
+                          Margin="0,0,0,4"
+                          Visibility="{Binding IsDeviationColouring, Converter={StaticResource BoolToVisibility}}">
+                <Rectangle Style="{StaticResource LegendSwatch}" Fill="{DynamicResource DeviationWithin}" />
+                <TextBlock Style="{StaticResource LegendText}" Text="{Binding LegendWithinText}" />
+                <Rectangle Style="{StaticResource LegendSwatch}" Fill="{DynamicResource DeviationNear}" />
+                <TextBlock Style="{StaticResource LegendText}" Text="{Binding LegendNearText}" />
+                <Rectangle Style="{StaticResource LegendSwatch}" Fill="{DynamicResource DeviationBeyond}" />
+                <TextBlock Style="{StaticResource LegendText}" Text="{Binding LegendBeyondText}" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal">
+                <Rectangle Style="{StaticResource LegendSwatch}" Fill="{DynamicResource PlotReference}" />
+                <TextBlock Style="{StaticResource LegendText}" Text="reference" />
+                <Rectangle Style="{StaticResource LegendSwatch}" Fill="{DynamicResource Missed}" />
+                <TextBlock Style="{StaticResource LegendText}" Text="missed by a run" />
+                <TextBlock Style="{StaticResource LegendText}" Text="● start  ■ end" />
+                <TextBlock Style="{StaticResource LegendText}" Text="{Binding GridText}" Margin="0" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Style="{StaticResource MutedText}"
+                     HorizontalAlignment="Right"
+                     VerticalAlignment="Bottom"
+                     Margin="12"
+                     IsHitTestVisible="False"
+                     Visibility="{Binding HasTrajectories, Converter={StaticResource BoolToVisibility}}"
+                     Text="Left-drag to turn · right-drag to move · wheel to zoom · double-click to centre" />
+        </Grid>
+
+        <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Rows" />
+
+        <DockPanel Grid.Row="2" Background="{DynamicResource SurfaceBackground}">
+          <TextBlock DockPanel.Dock="Top"
+                     Margin="12,8"
+                     FontWeight="SemiBold"
+                     Text="{Binding Issues.Count, StringFormat='Issues ({0}) - select one to zoom to it'}" />
+          <Grid>
+            <DataGrid ItemsSource="{Binding Issues}"
+                      SelectedItem="{Binding SelectedIssue}"
+                      BorderThickness="0,1,0,0"
+                      AutomationProperties.Name="Issues">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="#" Binding="{Binding Number}" Width="44" />
+                <DataGridTextColumn Header="Run" Binding="{Binding FileName}" Width="2*" />
+                <DataGridTextColumn Header="What" Binding="{Binding KindText}" Width="1.3*" />
+                <DataGridTextColumn Header="Where" Binding="{Binding WhereText}" Width="1.6*" />
+                <DataGridTextColumn Header="Length" Binding="{Binding LengthText}" Width="*" />
+                <DataGridTextColumn Header="Worst off" Binding="{Binding WorstText}" Width="*" />
+              </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock Style="{StaticResource MutedText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Text="{Binding NoIssuesText}" />
+          </Grid>
+        </DockPanel>
+      </Grid>
+    </Grid>
+
+    <!-- ============================== Status bar ============================== -->
+    <Border Grid.Row="2"
+            Background="{DynamicResource StatusBarBackground}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="0,1,0,0"
+            Padding="12,5">
+      <DockPanel>
+        <ProgressBar DockPanel.Dock="Left"
+                     Width="90"
+                     Margin="0,0,10,0"
+                     IsIndeterminate="True"
+                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+        <TextBlock Text="{Binding StatusText}"
+                   Foreground="{DynamicResource StatusBarForeground}"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   TextTrimming="CharacterEllipsis"
+                   VerticalAlignment="Center" />
+      </DockPanel>
+    </Border>
+  </Grid>
+</Window>

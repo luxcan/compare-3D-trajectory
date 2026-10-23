@@ -1,0 +1,20 @@
+<Application x:Class="Compare3DTrajectory.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:Compare3DTrajectory.App.Shell"
+             ShutdownMode="OnMainWindowClose">
+  <!-- No StartupUri: the window is created in App.OnStartup so its view model can be composed. -->
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!-- Palettes first, styles second: the styles name the palettes' keys and nothing else. -->
+        <ResourceDictionary Source="Theme/Precision.Dark.xaml" />
+        <ResourceDictionary Source="Theme/Plot.xaml" />
+        <ResourceDictionary Source="Theme/Controls.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+
+      <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+      <shell:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>
