@@ -59,10 +59,10 @@ public static class TrajectoryFileLoader
         foreach (RawTable table in withRows)
         {
             string name = withRows.Count == 1 ? fileName : $"{fileName} › {table.Name}";
-            TableParseResult parsed = TrajectoryTableParser.Parse(table);
+            TableParseResult parsed = TrajectoryTableParser.Parse(table with { Name = name });
             if (parsed.FailureReason is not null)
             {
-                failures.Add(new LoadFailure(name, path, parsed.FailureReason));
+                failures.Add(new LoadFailure(name, path, parsed.FailureReason) { MissingHeader = parsed.MissingHeader });
                 continue;
             }
 

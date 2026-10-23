@@ -22,10 +22,15 @@
                  FontSize="15"
                  FontWeight="SemiBold"
                  Foreground="{DynamicResource TextPrimary}" />
-      <TextBlock x:Name="MessageText"
-                 Margin="0,8,0,0"
-                 TextWrapping="Wrap"
-                 Foreground="{DynamicResource TextSecondary}" />
+      <!-- A list of refused files can outgrow the screen, so the message scrolls past a height. -->
+      <ScrollViewer Margin="0,8,0,0"
+                    MaxHeight="420"
+                    VerticalScrollBarVisibility="Auto"
+                    Focusable="False">
+        <TextBlock x:Name="MessageText"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextSecondary}" />
+      </ScrollViewer>
       <StackPanel x:Name="Buttons"
                   Margin="0,22,0,0"
                   Orientation="Horizontal"

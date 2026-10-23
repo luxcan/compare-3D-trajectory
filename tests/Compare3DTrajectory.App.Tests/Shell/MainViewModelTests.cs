@@ -21,9 +21,13 @@ public sealed class MainViewModelTests : IDisposable
     [Fact]
     public async Task AddFilesAsync_SamplesFolder_ComparesEveryRunWithTheFirstFile()
     {
-        MainViewModel viewModel = Create();
+        var confirmation = new StubConfirmation(answer: true);
+        MainViewModel viewModel = Create(confirmation: confirmation);
 
         await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+
+        confirmation.Told.Should().BeEmpty();
+        viewModel.Failures.Should().BeEmpty();
 
         viewModel.Trajectories.Select(item => item.Name).Should().Equal(
             "model.csv", "run-cut-corner.tsv", "run-detour.csv", "run-good.csv", "run-moved-and-turned.xlsx");
@@ -126,7 +130,8 @@ public sealed class MainViewModelTests : IDisposable
     [Fact]
     public async Task AddFilesAsync_UnreadableFile_ListsTheFailureWithItsReason()
     {
-        MainViewModel viewModel = Create();
+        var confirmation = new StubConfirmation(answer: true);
+        MainViewModel viewModel = Create(confirmation: confirmation);
         string bad = Path.Combine(_folder, "notes.csv");
         await File.WriteAllTextAsync(bad, "just,two\nwords,here\n");
 
@@ -136,6 +141,37 @@ public sealed class MainViewModelTests : IDisposable
         LoadFailureViewModel failure = viewModel.Failures.Should().ContainSingle().Subject;
         failure.Name.Should().Be("notes.csv");
         failure.Reason.Should().StartWith("Could not find three numeric columns");
+        confirmation.Told.Should().BeEmpty("only files of numbers without a header are refused out loud");
+    }
+
+    [Fact]
+    public async Task AddFilesAsync_FilesWithoutAHeader_AreListedInOneDialogAndKeptAsFailures()
+    {
+        var confirmation = new StubConfirmation(answer: true);
+        MainViewModel viewModel = Create(confirmation: confirmation);
+        string headerless = Path.Combine(_folder, "headerless.csv");
+        string enu = Path.Combine(_folder, "east-north-up.csv");
+        await File.WriteAllTextAsync(headerless, "1,2,3\n4,5,6\n");
+        await File.WriteAllTextAsync(enu, "Time,East,North,Up\n0,1,2,3\n1,4,5,6\n");
+
+        await viewModel.AddFilesAsync([headerless, enu, Path.Combine(RepositoryFiles.Samples, "model.csv")]);
+
+        viewModel.Trajectories.Select(item => item.Name).Should().Equal("model.csv");
+        viewModel.Failures.Select(failure => failure.Name).Should().Equal("headerless.csv", "east-north-up.csv");
+        (string title, string message) = confirmation.Told.Should().ContainSingle().Subject;
+        title.Should().Be("Please add in the header for x, y, z");
+        message.Should().Be(string.Join(
+            Environment.NewLine,
+            "2 files were not loaded:",
+            string.Empty,
+            "headerless.csv",
+            "Columns found: none; line 1 already holds numbers (1, 2, 3)",
+            string.Empty,
+            "east-north-up.csv",
+            "Columns found: 'Time', 'East', 'North', 'Up'",
+            "No column is named x, y or z.",
+            string.Empty,
+            "Example first line: x,y,z"));
     }
 
     [Fact]

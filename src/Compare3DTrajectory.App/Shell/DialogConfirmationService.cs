@@ -8,4 +8,7 @@ public sealed class DialogConfirmationService : IConfirmationService
 {
     public bool Confirm(string title, string message, string confirm) =>
         AppDialog.Confirm(Application.Current?.MainWindow, title, message, confirm);
+
+    public void Inform(string title, string message) =>
+        AppDialog.Inform(Application.Current?.MainWindow, title, message);
 }

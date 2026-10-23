@@ -20,6 +20,23 @@ public partial class AppDialog : Window
     /// </summary>
     public static bool Confirm(Window? owner, string title, string message, string confirm)
     {
+        AppDialog dialog = Create(owner, title, message);
+        dialog.AddButton(confirm, isConfirm: true, isDefault: false);
+        dialog.AddButton("Cancel", isConfirm: false, isDefault: true);
+        dialog.ShowDialog();
+        return dialog._confirmed;
+    }
+
+    /// <summary>Shows a message with one button, centred over the owner, until the user closes it.</summary>
+    public static void Inform(Window? owner, string title, string message)
+    {
+        AppDialog dialog = Create(owner, title, message);
+        dialog.AddButton("OK", isConfirm: true, isDefault: true);
+        dialog.ShowDialog();
+    }
+
+    private static AppDialog Create(Window? owner, string title, string message)
+    {
         var dialog = new AppDialog
         {
             Title = title,
@@ -36,19 +53,16 @@ public partial class AppDialog : Window
             dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         }
 
-        dialog.AddButton(confirm, isConfirm: true);
-        dialog.AddButton("Cancel", isConfirm: false);
-        dialog.ShowDialog();
-        return dialog._confirmed;
+        return dialog;
     }
 
-    private void AddButton(string text, bool isConfirm)
+    private void AddButton(string text, bool isConfirm, bool isDefault)
     {
         var button = new Button
         {
             Content = text,
             MinWidth = 96,
-            IsDefault = !isConfirm,
+            IsDefault = isDefault,
         };
 
         button.SetResourceReference(StyleProperty, isConfirm ? "PrimaryButton" : "SecondaryButton");

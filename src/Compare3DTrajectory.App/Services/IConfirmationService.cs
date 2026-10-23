@@ -1,6 +1,9 @@
 namespace Compare3DTrajectory.App.Services;
 
-/// <summary>Asks the user before something that would be tedious to undo.</summary>
+/// <summary>
+/// Asks the user before something that would be tedious to undo, or tells them something they must
+/// not miss.
+/// </summary>
 public interface IConfirmationService
 {
     /// <summary>
@@ -8,4 +11,7 @@ public interface IConfirmationService
     /// agreeing button with the act it performs, rather than "OK".
     /// </summary>
     bool Confirm(string title, string message, string confirm);
+
+    /// <summary>Shows the message until the user closes it.</summary>
+    void Inform(string title, string message);
 }

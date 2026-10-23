@@ -48,7 +48,7 @@ public static class ExcelTableReader
                 }
             }
 
-            tables.Add(new RawTable(reader.Name, rows));
+            tables.Add(new RawTable(reader.Name, rows) { IsWorksheet = true });
         }
         while (reader.NextResult());
 

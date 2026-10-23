@@ -136,7 +136,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Reads the files (and the supported files directly inside any folders) on the thread pool and
-    /// adds every trajectory they hold. A file already in the list is not added twice.
+    /// adds every trajectory they hold. A file already in the list is not added twice. Files of
+    /// numbers without a header naming x, y and z are refused out loud, in one dialog for them all.
     /// </summary>
     public async Task AddFilesAsync(IEnumerable<string> paths)
     {
@@ -190,6 +191,12 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             StartComparison();
+        }
+
+        List<LoadFailure> refused = [.. results.SelectMany(result => result.Failures).Where(failure => failure.MissingHeader is not null)];
+        if (refused.Count > 0)
+        {
+            _confirmation.Inform(RefusalText.Title, RefusalText.Describe(refused));
         }
 
         await CurrentComparison;

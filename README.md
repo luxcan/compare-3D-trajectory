@@ -29,12 +29,19 @@ exactly as recorded.
 
 - **Formats:** `.csv`, `.txt` or `.tsv` text, or `.xlsx`, `.xlsm` and `.xls` workbooks. Every sheet
   of a workbook with points on it becomes its own trajectory. Excel does not need to be installed.
-- **Layout:** comma, semicolon, tab, `|` or space separated, found automatically. A header row is
-  optional.
-- **Choosing x, y and z:** taken from columns named for them, such as `x`, `pos_x`, `PositionX`,
-  `WorldLocation.X` or `World Location X`. Position columns win over velocity or angle columns.
-  Without such names, the first three numeric columns are used.
-- **Bad rows:** rows that are not numbers are skipped, and the file's row says which lines they were.
+- **Layout:** comma, semicolon, tab, `|` or space separated, found automatically. Semicolon, tab
+  and space files may use a decimal comma (`1.234,5`). A title or comment above the header is
+  passed over.
+- **Header:** required. It must name x, y and z, each by exactly one column, such as `x`, `pos_x`,
+  `PositionX`, `WorldLocation.X`, `World Location X` or `X (m)`. A position column wins over a plain
+  one, and a velocity, angle or error column (`VelX`, `EulerX`, `x_sigma`) is never a position. Other
+  columns, such as time or an id, are ignored wherever they sit. A file of numbers without such a
+  header is refused with "Please add in the header for x, y, z", the columns found and an example
+  first line, and so is one where two columns could be the same axis.
+- **One entity per file:** a file whose Entity, Marking or similar column holds several entities is
+  refused, since one path through all of them would zig-zag between them.
+- **Bad rows:** rows that are not numbers, or that have more cells than the header, are skipped, and
+  the file's row says which lines they were.
 - **Coordinates:** geocentric (ECEF) metres, the HLA RPR FOM `WorldLocation`, are recognised
   automatically. They are compared in a local East-North-Up frame, so "up" is the true vertical. Any
   other file is read as metres with Z up. A file's right-click menu switches between the two.

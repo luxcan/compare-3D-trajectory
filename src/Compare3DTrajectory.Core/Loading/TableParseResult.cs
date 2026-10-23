@@ -9,7 +9,7 @@ namespace Compare3DTrajectory.Core.Loading;
 /// <param name="LineNumbers">The line or row number each point came from, so a point can be found in the file.</param>
 /// <param name="SkippedRows">Rows that were not points, with the reason for each.</param>
 /// <param name="ColumnDescription">Which columns were taken as x, y and z.</param>
-/// <param name="Note">Anything else the reader had to decide, such as ignoring extra numeric columns.</param>
+/// <param name="Note">Anything else the reader had to decide, such as ignoring a title above the header.</param>
 /// <param name="FailureReason">Why the table gave no usable points; null when it did.</param>
 public sealed record TableParseResult(
     IReadOnlyList<Vec3> Points,
@@ -17,4 +17,8 @@ public sealed record TableParseResult(
     IReadOnlyList<SkippedRow> SkippedRows,
     string ColumnDescription,
     string? Note,
-    string? FailureReason);
+    string? FailureReason)
+{
+    /// <summary>Set when the table holds numbers but no header naming x, y and z, so it was refused.</summary>
+    public MissingHeader? MissingHeader { get; init; }
+}

@@ -33,7 +33,7 @@ internal static class SampleScenarios
         List<Vec3> recorded = Noise.Jitter(route.Sample(1), sigma: 0.3, seed: 42);
 
         WriteDelimited(Path.Combine(folder, Model), ",", ["x", "y", "z"], route.Sample(10), time: false);
-        WriteDelimited(Path.Combine(folder, Good), ",", null, recorded, time: false);
+        WriteDelimited(Path.Combine(folder, Good), ",", ["PositionX", "PositionY", "PositionZ"], recorded, time: false);
 
         List<Vec3> detour = Noise.Jitter(
             route.SampleWith(1, (s, position, heading) => Route.Detour(s, position, heading, 500, 600, 25)),

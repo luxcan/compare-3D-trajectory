@@ -39,7 +39,7 @@ public sealed class TrajectoryFileLoaderTests : IDisposable
     {
         Vec3 a = Wgs84.ToEcef(new GeodeticPosition(1.35, 103.82, 10));
         Vec3 b = Wgs84.ToEcef(new GeodeticPosition(1.351, 103.821, 15));
-        string path = _folder.WriteText("ecef.csv", $"{a.X:R},{a.Y:R},{a.Z:R}\n{b.X:R},{b.Y:R},{b.Z:R}\n");
+        string path = _folder.WriteText("ecef.csv", $"x,y,z\n{a.X:R},{a.Y:R},{a.Z:R}\n{b.X:R},{b.Y:R},{b.Z:R}\n");
 
         LoadedTrajectory trajectory = TrajectoryFileLoader.Load(path).Trajectories.Single();
 
@@ -79,6 +79,7 @@ public sealed class TrajectoryFileLoaderTests : IDisposable
 
         AssertWorkbookPoints(TrajectoryFileLoader.Load(path), "legacy-format.xls");
     }
+
     [Fact]
     public void Load_WorkbookWithSeveralSheets_GivesATrajectoryPerSheetAndSkipsEmptyOnes()
     {
@@ -87,7 +88,7 @@ public sealed class TrajectoryFileLoaderTests : IDisposable
             path,
             ("Run A", [["x", "y", "z"], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
             ("Empty", []),
-            ("Run B", [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]),
+            ("Run B", [["X", "Y", "Z"], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]),
             ("Notes", [["just some text"]]));
 
         FileLoadResult result = TrajectoryFileLoader.Load(path);
@@ -129,9 +130,98 @@ public sealed class TrajectoryFileLoaderTests : IDisposable
     [Fact]
     public void Load_CsvStillOpenForWritingElsewhere_IsStillRead()
     {
-        string path = _folder.WriteText("open.csv", "1,2,3\n4,5,6\n");
+        string path = _folder.WriteText("open.csv", "x,y,z\n1,2,3\n4,5,6\n");
         using var heldOpen = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
 
         TrajectoryFileLoader.Load(path).Trajectories.Should().ContainSingle();
+    }
+
+    /// <summary>A refused sheet is named with its workbook, and the example says where the header goes.</summary>
+    [Fact]
+    public void Load_HeaderlessSheet_IsRefusedNamingTheSheetWithACellExample()
+    {
+        string path = _folder.File("runs.xlsx");
+        ExcelFixture.Write(
+            path,
+            ("Run A", [["x", "y", "z"], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            ("Run B", [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]));
+
+        FileLoadResult result = TrajectoryFileLoader.Load(path);
+
+        result.Trajectories.Should().ContainSingle();
+        LoadFailure failure = result.Failures.Should().ContainSingle().Subject;
+        failure.Name.Should().Be("runs.xlsx › Run B");
+        failure.Reason.Should().Be(string.Join(
+            Environment.NewLine,
+            "Please add in the header for x, y, z.",
+            "File: runs.xlsx › Run B",
+            "Columns found: none; row 1 already holds numbers (7, 8, 9)",
+            "Example first row: x, y, z in cells A1, B1, C1"));
+        failure.MissingHeader.Should().NotBeNull();
+    }
+
+    /// <summary>F11: a headerless time, X, Y, Z export near the equator was read as geocentric with time as X.</summary>
+    [Fact]
+    public void Load_HeaderlessTimeAndEcefColumns_IsRefusedRatherThanReadWithTimeAsX()
+    {
+        string path = _folder.WriteText("mak.csv", "0,-1520987.1,6192349.2,149262.3\n0.1,-1520988.1,6192348.2,149263.3\n");
+
+        FileLoadResult result = TrajectoryFileLoader.Load(path);
+
+        result.Trajectories.Should().BeEmpty();
+        result.Failures.Single().Reason.Should().StartWith("Please add in the header for x, y, z.");
+    }
+
+    /// <summary>F73: a blank or error cell in row 1 of a headerless sheet made that row a "header" that vanished.</summary>
+    [Fact]
+    public void Load_HeaderlessSheetWithABlankFirstCell_IsRefused()
+    {
+        string path = _folder.File("blank.xlsx");
+        ExcelFixture.Write(path, ("Data",
+        [
+            [-1_523_164.9, null, 149_264.1],
+            [-1_523_165.9, 6_191_816.0, 149_265.1],
+            [-1_523_166.9, 6_191_815.0, 149_266.1],
+        ]));
+
+        FileLoadResult result = TrajectoryFileLoader.Load(path);
+
+        result.Trajectories.Should().BeEmpty();
+        result.Failures.Single().MissingHeader.Should().NotBeNull();
+    }
+
+    /// <summary>F75: a title in A1 and the header further down and across, as a report is laid out in Excel.</summary>
+    [Fact]
+    public void Load_SheetWithATitleAboveAnOffsetHeader_ReadsTheRowsUnderTheHeader()
+    {
+        string path = _folder.File("report.xlsx");
+        ExcelFixture.Write(path, ("Export",
+        [
+            ["Trajectory export 2026-10-23"],
+            null,
+            null,
+            null,
+            [null, null, "x", "y", "z"],
+            [null, null, 1.0, 2.0, 3.0],
+            [null, null, 4.0, 5.0, 6.0],
+            [null, null, 7.0, 8.0, 9.0],
+            [null, null, 10.0, 11.0, 12.0],
+        ]));
+
+        LoadedTrajectory trajectory = TrajectoryFileLoader.Load(path).Trajectories.Should().ContainSingle().Subject;
+
+        trajectory.Points.Should().HaveCount(4);
+        trajectory.LineNumbers.Should().Equal(6, 7, 8, 9);
+        trajectory.Note.Should().Be("Row 1, above the header, was not read.");
+    }
+
+    /// <summary>A worksheet keeps its columns, so a value beyond the header's last column moves nothing.</summary>
+    [Fact]
+    public void Load_SheetRowWithANoteBeyondTheHeader_IsStillRead()
+    {
+        string path = _folder.File("notes.xlsx");
+        ExcelFixture.Write(path, ("Data", [["x", "y", "z"], [1.0, 2.0, 3.0, null, "turn starts"], [4.0, 5.0, 6.0]]));
+
+        TrajectoryFileLoader.Load(path).Trajectories.Single().Points.Should().HaveCount(2);
     }
 }
