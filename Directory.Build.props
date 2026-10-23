@@ -26,6 +26,9 @@
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>embedded</DebugType>
+    <!-- Records source paths as /_/src/... instead of this machine's own folders, so a published
+         exe carries no local user name or folder layout in its embedded debug information. -->
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
