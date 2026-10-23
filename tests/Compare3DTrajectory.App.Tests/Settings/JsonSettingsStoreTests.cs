@@ -32,6 +32,20 @@ public sealed class JsonSettingsStoreTests : IDisposable
         store.Load().Should().Be(settings);
     }
 
+    /// <summary>F34: an undefined colour mode, from a hand edit or corruption, stopped the app starting.</summary>
+    [Theory]
+    [InlineData("7")]
+    [InlineData("5")]
+    [InlineData("\"7\"")]
+    public void Load_UndefinedColourMode_KeepsTheRestAndColoursByDeviation(string colourMode)
+    {
+        Directory.CreateDirectory(_folder);
+        string path = Path.Combine(_folder, "settings.json");
+        File.WriteAllText(path, $$"""{ "Tolerance": 3, "FitHeading": false, "ColourMode": {{colourMode}}, "LastFolder": null }""");
+
+        new JsonSettingsStore(path).Load().Should().Be(new AppSettings(3, false, ColourMode.Deviation, null));
+    }
+
     [Theory]
     [InlineData("{ not json")]
     [InlineData("{ \"Tolerance\": -3, \"FitHeading\": true, \"ColourMode\": \"File\" }")]

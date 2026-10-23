@@ -5,6 +5,8 @@ using Compare3DTrajectory.App.Viewer;
 using Compare3DTrajectory.Core.Alignment;
 using Compare3DTrajectory.Core.Comparison;
 using Compare3DTrajectory.Core.Geometry;
+using Compare3DTrajectory.Core.Loading;
+using Compare3DTrajectory.Core.Tests.Loading;
 
 namespace Compare3DTrajectory.App.Tests.Shell;
 
@@ -285,6 +287,230 @@ public sealed class MainViewModelTests : IDisposable
         viewModel.Trajectories.Should().ContainSingle();
     }
 
+    /// <summary>F32: while a new reference was being compared against, a redraw paired the runs' old issues with it.</summary>
+    [Fact]
+    public async Task Reference_ChangedAndARunHiddenBeforeTheComparisonEnds_NeverPairsOldIssuesWithIt()
+    {
+        MainViewModel viewModel = await LoadedSamples();
+        string shortPath = Path.Combine(_folder, "short.csv");
+        await File.WriteAllLinesAsync(shortPath, File.ReadLines(Path.Combine(RepositoryFiles.Samples, "model.csv")).Take(4));
+        await viewModel.AddFilesAsync([shortPath]);
+
+        Item(viewModel, "short.csv").IsReference = true;
+        Item(viewModel, "run-detour.csv").IsVisible = false;
+
+        viewModel.Issues.Should().BeEmpty("no run has been compared with short.csv yet");
+        await viewModel.CurrentComparison;
+        viewModel.Issues.Should().NotBeEmpty();
+    }
+
+    /// <summary>F33: one file whose reading threw lost every file in the drop.</summary>
+    [Fact]
+    public async Task AddFilesAsync_OneFileThrowsWhileBeingRead_TheOthersStillLoad()
+    {
+        string boom = Path.Combine(_folder, "boom.csv");
+        await File.WriteAllTextAsync(boom, "x,y,z\n");
+        MainViewModel viewModel = Create(load: path => path == boom ? throw new InvalidOperationException("The reader failed.") : TrajectoryFileLoader.Load(path));
+
+        await viewModel.AddFilesAsync([boom, Path.Combine(RepositoryFiles.Samples, "model.csv"), Path.Combine(RepositoryFiles.Samples, "run-good.csv")]);
+
+        viewModel.Trajectories.Should().HaveCount(2);
+        LoadFailureViewModel failure = viewModel.Failures.Should().ContainSingle().Subject;
+        failure.Name.Should().Be("boom.csv");
+        failure.Reason.Should().Be("The reader failed.");
+        viewModel.StatusText.Should().StartWith("Reference model.csv");
+        viewModel.IsBusy.Should().BeFalse();
+    }
+
+    /// <summary>F34: a hand-edited or corrupted settings file with ColourMode 7 stopped the app starting.</summary>
+    [Fact]
+    public void Constructor_SettingsWithAnUndefinedColourMode_StartsWithTheDefaultColouring()
+    {
+        MainViewModel viewModel = Create(store: new MemorySettingsStore(AppSettings.Default with { ColourMode = (ColourMode)7 }));
+
+        viewModel.SelectedColourMode.Mode.Should().Be(ColourMode.Deviation);
+    }
+
+    /// <summary>F36: "Settings were not saved" was replaced at once by the comparison's own status.</summary>
+    [Fact]
+    public async Task SettingsThatCannotBeSaved_StaySaidInTheStatusBar()
+    {
+        const string Problem = "Settings were not saved: The file is in use by another process.";
+        MainViewModel viewModel = Create(store: new MemorySettingsStore(AppSettings.Default, "The file is in use by another process."));
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        viewModel.StatusText.Should().EndWith(Problem);
+
+        viewModel.ToleranceText = "3";
+        await viewModel.CurrentComparison;
+        viewModel.StatusText.Should().EndWith(Problem);
+
+        viewModel.FitHeading = false;
+        await viewModel.CurrentComparison;
+        viewModel.StatusText.Should().EndWith(Problem);
+    }
+
+    /// <summary>
+    /// F37: a comparison replaced while a drop waited for it ended the wait early, so the view was
+    /// framed on an empty scene and the "already loaded" note was overwritten.
+    /// </summary>
+    [Fact]
+    public void AddFilesAsync_ComparisonReplacedWhileItWaits_FramesTheViewAndKeepsTheNote() => SingleThreadedContext.Run(async () =>
+    {
+        MainViewModel viewModel = Create();
+        bool replaced = false;
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.StatusText) && !replaced && viewModel.StatusText.StartsWith("Comparing", StringComparison.Ordinal))
+            {
+                replaced = true;
+                SynchronizationContext.Current!.Post(_ => viewModel.ToleranceText = "3", null);
+            }
+        };
+        SceneModel? framed = null;
+        viewModel.FitViewRequested += (_, _) => framed = viewModel.Scene;
+
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples, Path.Combine(RepositoryFiles.Samples, "model.csv")]);
+
+        replaced.Should().BeTrue();
+        framed.Should().NotBeNull();
+        framed!.IsEmpty.Should().BeFalse();
+        viewModel.StatusText.Should().Contain("tolerance 3.00 m").And.EndWith("1 file already loaded");
+    });
+
+    /// <summary>F38: the same file by another spelling of its path was loaded again.</summary>
+    [Fact]
+    public async Task AddFilesAsync_TheSameFileByOtherSpellingsOfItsPath_AddsItOnce()
+    {
+        MainViewModel viewModel = Create();
+        string model = Path.Combine(RepositoryFiles.Samples, "model.csv");
+
+        await viewModel.AddFilesAsync([model, model.ToUpperInvariant(), Path.Combine(RepositoryFiles.Samples, ".", "model.csv")]);
+
+        viewModel.Trajectories.Should().ContainSingle();
+        viewModel.StatusText.Should().EndWith("· 1 file already loaded", "both other spellings name the one file");
+    }
+
+    /// <summary>F39: a workbook added again counted each of its sheets as a file already loaded.</summary>
+    [Fact]
+    public async Task AddFilesAsync_WorkbookOfSeveralSheetsAddedAgain_CountsOneFile()
+    {
+        MainViewModel viewModel = Create();
+        string book = Path.Combine(_folder, "runs.xlsx");
+        object?[]?[] sheet = [["x", "y", "z"], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        ExcelFixture.Write(book, ("A", sheet), ("B", sheet), ("C", sheet));
+        await viewModel.AddFilesAsync([book]);
+
+        await viewModel.AddFilesAsync([book]);
+
+        viewModel.Trajectories.Should().HaveCount(3);
+        viewModel.StatusText.Should().EndWith("· 1 file already loaded");
+    }
+
+    /// <summary>F39: an unreadable file added again listed its failure twice.</summary>
+    [Fact]
+    public async Task AddFilesAsync_UnreadableFileAddedAgain_ListsItsFailureOnce()
+    {
+        MainViewModel viewModel = Create();
+        string notes = Path.Combine(_folder, "notes.csv");
+        await File.WriteAllTextAsync(notes, "just,two\nwords,here\n");
+
+        await viewModel.AddFilesAsync([notes]);
+        await viewModel.AddFilesAsync([notes]);
+
+        viewModel.Failures.Should().ContainSingle();
+    }
+
+    /// <summary>F39: a file that failed while Excel held it kept its failure row after it loaded.</summary>
+    [Fact]
+    public async Task AddFilesAsync_FileThatFailedThenLoads_DropsItsFailure()
+    {
+        MainViewModel viewModel = Create();
+        string run = Path.Combine(_folder, "run.csv");
+        File.Copy(Path.Combine(RepositoryFiles.Samples, "model.csv"), run);
+        using (new FileStream(run, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await viewModel.AddFilesAsync([run]);
+        }
+
+        viewModel.Failures.Should().ContainSingle();
+
+        await viewModel.AddFilesAsync([run]);
+
+        viewModel.Trajectories.Should().ContainSingle();
+        viewModel.Failures.Should().BeEmpty();
+    }
+
+    /// <summary>F40: a dropped folder whose files sat in subfolders loaded nothing, and said nothing.</summary>
+    [Fact]
+    public async Task AddFilesAsync_FolderWithFilesInSubfolders_LoadsThem()
+    {
+        MainViewModel viewModel = Create();
+        string runs = Path.Combine(_folder, "Runs");
+        foreach (string run in new[] { "Run1", "Run2" })
+        {
+            Directory.CreateDirectory(Path.Combine(runs, run));
+            File.Copy(Path.Combine(RepositoryFiles.Samples, "model.csv"), Path.Combine(runs, run, "log.csv"));
+        }
+
+        await viewModel.AddFilesAsync([runs]);
+
+        viewModel.Trajectories.Select(item => item.SourcePath).Should().Equal(
+            Path.Combine(runs, "Run1", "log.csv"),
+            Path.Combine(runs, "Run2", "log.csv"));
+    }
+
+    [Fact]
+    public async Task AddFilesAsync_FolderWithNothingToRead_SaysSo()
+    {
+        MainViewModel viewModel = Create();
+        string empty = Path.Combine(_folder, "Empty");
+        Directory.CreateDirectory(empty);
+        await File.WriteAllTextAsync(Path.Combine(empty, "readme.md"), "nothing here");
+
+        await viewModel.AddFilesAsync([empty]);
+
+        viewModel.StatusText.Should().Be("No CSV or Excel files were found in Empty.");
+    }
+
+    /// <summary>F50: Excel's ~$ owner file beside an open workbook was listed as a file that failed.</summary>
+    [Fact]
+    public async Task AddFilesAsync_FolderWithAnExcelOwnerFile_PassesItOver()
+    {
+        MainViewModel viewModel = Create();
+        string folder = Path.Combine(_folder, "Open");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryFiles.Samples, "run-moved-and-turned.xlsx"), Path.Combine(folder, "run.xlsx"));
+        await File.WriteAllBytesAsync(Path.Combine(folder, "~$run.xlsx"), new byte[165]);
+
+        await viewModel.AddFilesAsync([folder]);
+
+        viewModel.Trajectories.Should().ContainSingle();
+        viewModel.Failures.Should().BeEmpty();
+    }
+
+    /// <summary>F41: a comparison ending while a drop was still being read hid the busy indicator.</summary>
+    [Fact]
+    public async Task IsBusy_ComparisonEndsWhileADropIsStillBeingRead_StaysOn()
+    {
+        using var reading = new ManualResetEventSlim(initialState: true);
+        MainViewModel viewModel = Create(load: path =>
+        {
+            reading.Wait();
+            return TrajectoryFileLoader.Load(path);
+        });
+        await viewModel.AddFilesAsync([Path.Combine(RepositoryFiles.Samples, "model.csv"), Path.Combine(RepositoryFiles.Samples, "run-good.csv")]);
+        reading.Reset();
+
+        Task adding = viewModel.AddFilesAsync([Path.Combine(RepositoryFiles.Samples, "run-detour.csv")]);
+        viewModel.ToleranceText = "3";
+        await viewModel.CurrentComparison;
+
+        viewModel.IsBusy.Should().BeTrue("the drop is still being read");
+        reading.Set();
+        await adding;
+        viewModel.IsBusy.Should().BeFalse();
+    }
+
     private static TrajectoryItemViewModel Item(MainViewModel viewModel, string name) =>
         viewModel.Trajectories.Single(item => item.Name == name);
 
@@ -298,10 +524,14 @@ public sealed class MainViewModelTests : IDisposable
     private static MainViewModel Create(
         StubFileDialog? dialog = null,
         StubConfirmation? confirmation = null,
-        MemorySettingsStore? store = null) =>
+        MemorySettingsStore? store = null,
+        Func<string, FileLoadResult>? load = null) =>
         new(
             dialog ?? new StubFileDialog(),
             confirmation ?? new StubConfirmation(answer: true),
             store ?? new MemorySettingsStore(AppSettings.Default),
-            TestPalette.Create());
+            TestPalette.Create())
+        {
+            LoadFile = load ?? TrajectoryFileLoader.Load,
+        };
 }

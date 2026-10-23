@@ -62,7 +62,9 @@ Drop files or whole folders onto the window, use **Add files…**, or pass paths
 
 Publishes a single self-contained `Compare3DTrajectory.exe` (no .NET install needed) to
 `%LOCALAPPDATA%\Programs\Compare3DTrajectory` and adds **Compare 3D Trajectory** to the Start menu.
-`-Uninstall` removes it again. Settings are kept in `%LOCALAPPDATA%\Compare3DTrajectory`.
+It runs in Windows PowerShell 5.1 as well as PowerShell 7. A new build replaces the installed one
+only once its publish has succeeded. `-Uninstall` removes it again, with the native libraries it
+unpacks into `%TEMP%`. Settings are kept in `%LOCALAPPDATA%\Compare3DTrajectory`.
 
 ## Develop
 

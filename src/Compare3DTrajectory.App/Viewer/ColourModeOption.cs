@@ -9,5 +9,6 @@ public sealed record ColourModeOption(ColourMode Mode, string Name, string Descr
         new(ColourMode.File, "File", "Each run in its own colour, to tell many runs apart."),
     ];
 
-    public static ColourModeOption For(ColourMode mode) => All.Single(option => option.Mode == mode);
+    /// <summary>The option for a mode; the first, for a mode the app does not know, so bad settings never stop it starting.</summary>
+    public static ColourModeOption For(ColourMode mode) => All.FirstOrDefault(option => option.Mode == mode) ?? All[0];
 }

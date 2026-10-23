@@ -39,7 +39,11 @@ public partial class App : Application
         MainWindow.Show();
     }
 
-    /// <summary>Last line of defence: report rather than vanish, so failures stay diagnosable.</summary>
+    /// <summary>
+    /// Last line of defence: report rather than vanish, so failures stay diagnosable. A failure
+    /// before the window is up, during startup, leaves nothing to carry on with, so the app then
+    /// closes instead of running on with no window.
+    /// </summary>
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         string log = WriteCrashLog(e.Exception);
@@ -52,6 +56,10 @@ public partial class App : Application
             MessageBoxImage.Error);
 
         e.Handled = true;
+        if (Current?.MainWindow is not { IsVisible: true })
+        {
+            Current?.Shutdown(1);
+        }
     }
 
     /// <summary>

@@ -23,7 +23,8 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
 
     /// <summary>
     /// The saved settings, or the defaults when there are none yet or the file cannot be used. A
-    /// damaged settings file is not worth stopping the app over: the next save replaces it.
+    /// damaged settings file is not worth stopping the app over: the next save replaces it. A colour
+    /// mode the app does not know, which JSON allows as any number, falls back to the default alone.
     /// </summary>
     public AppSettings Load()
     {
@@ -35,9 +36,12 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
             }
 
             AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options);
-            return loaded is not null && loaded.Tolerance > 0 && double.IsFinite(loaded.Tolerance)
-                ? loaded
-                : AppSettings.Default;
+            if (loaded is null || !(loaded.Tolerance > 0) || !double.IsFinite(loaded.Tolerance))
+            {
+                return AppSettings.Default;
+            }
+
+            return Enum.IsDefined(loaded.ColourMode) ? loaded : loaded with { ColourMode = AppSettings.Default.ColourMode };
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Compare3DTrajectory.App.Files;
@@ -44,6 +45,16 @@ public sealed partial class MainViewModel : ObservableObject
     private int _nextColour;
     private string? _lastFolder;
     private bool _rebuildingIssues;
+
+    /// <summary>Reading and comparing overlap, so the busy indicator stays on while either is under way.</summary>
+    private int _readsInProgress;
+    private bool _comparing;
+
+    /// <summary>The reference the runs' results were measured against; results against any other are stale.</summary>
+    private TrajectoryItemViewModel? _resultsReference;
+
+    /// <summary>Why the settings were last not saved; null once a save succeeds.</summary>
+    private string? _settingsProblem;
 
     public MainViewModel(
         IFileDialogService fileDialog,
@@ -95,6 +106,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The comparison most recently started, so a caller can wait for the results.</summary>
     public Task CurrentComparison { get; private set; } = Task.CompletedTask;
 
+    /// <summary>Reads one file; the loader, unless a test needs a read that fails or waits.</summary>
+    internal Func<string, FileLoadResult> LoadFile { get; init; } = TrajectoryFileLoader.Load;
+
     [ObservableProperty]
     private string _toleranceText;
 
@@ -135,45 +149,56 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _hasTrajectories;
 
     /// <summary>
-    /// Reads the files (and the supported files directly inside any folders) on the thread pool and
-    /// adds every trajectory they hold. A file already in the list is not added twice. Files of
-    /// numbers without a header naming x, y and z are refused out loud, in one dialog for them all.
+    /// Reads the files, and the supported files anywhere inside any folders, on the thread pool and
+    /// adds every trajectory they hold. A file already in the list is not added twice, however its
+    /// path is spelt. Files of numbers without a header naming x, y and z are refused out loud, in
+    /// one dialog for them all.
     /// </summary>
     public async Task AddFilesAsync(IEnumerable<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        List<string> files = ExpandFolders(paths);
-        if (files.Count == 0)
+        DroppedFiles dropped = ExpandFolders(paths);
+        foreach (LoadFailure failure in dropped.UnreadableFolders)
         {
+            ReplaceFailures(failure.SourcePath, [failure]);
+        }
+
+        if (dropped.Files.Count == 0)
+        {
+            if (dropped.EmptyFolders.Count > 0)
+            {
+                StatusText = $"No CSV or Excel files were found in {string.Join(", ", dropped.EmptyFolders)}.";
+            }
+
             return;
         }
 
+        List<string> files = dropped.Files;
         bool wasEmpty = Trajectories.Count == 0;
-        IsBusy = true;
+        _readsInProgress++;
+        UpdateBusy();
         StatusText = $"Reading {Measure.Plural(files.Count, "file")}…";
         FileLoadResult[] results;
         try
         {
-            results = await Task.Run(() => files.AsParallel().AsOrdered().Select(TrajectoryFileLoader.Load).ToArray());
+            results = await Task.Run(() => files.AsParallel().AsOrdered().Select(ReadFile).ToArray());
         }
         finally
         {
-            IsBusy = false;
+            _readsInProgress--;
+            UpdateBusy();
         }
 
-        int duplicates = 0;
-        foreach (FileLoadResult result in results)
+        var alreadyLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < files.Count; i++)
         {
-            foreach (LoadFailure failure in result.Failures)
+            ReplaceFailures(files[i], results[i].Failures);
+            foreach (LoadedTrajectory loaded in results[i].Trajectories)
             {
-                Failures.Add(new LoadFailureViewModel(failure));
-            }
-
-            foreach (LoadedTrajectory loaded in result.Trajectories)
-            {
-                if (Trajectories.Any(item => item.SourcePath == loaded.SourcePath && item.Name == loaded.Name))
+                if (Trajectories.Any(item => SamePath(item.SourcePath, loaded.SourcePath)
+                                             && string.Equals(item.Name, loaded.Name, StringComparison.OrdinalIgnoreCase)))
                 {
-                    duplicates++;
+                    alreadyLoaded.Add(files[i]);
                     continue;
                 }
 
@@ -199,10 +224,15 @@ public sealed partial class MainViewModel : ObservableObject
             _confirmation.Inform(RefusalText.Title, RefusalText.Describe(refused));
         }
 
-        await CurrentComparison;
-        if (duplicates > 0)
+        await WaitForComparisons();
+        if (alreadyLoaded.Count > 0)
         {
-            StatusText += $" · {Measure.Plural(duplicates, "file")} already loaded";
+            StatusText += $" · {Measure.Plural(alreadyLoaded.Count, "file")} already loaded";
+        }
+
+        if (dropped.EmptyFolders.Count > 0)
+        {
+            StatusText += $" · no CSV or Excel files in {string.Join(", ", dropped.EmptyFolders)}";
         }
 
         if (wasEmpty && HasTrajectories)
@@ -210,6 +240,56 @@ public sealed partial class MainViewModel : ObservableObject
             FitViewRequested?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    /// <summary>
+    /// One file, read so that nothing it throws can take the other files of the drop with it: it
+    /// becomes that file's failure row.
+    /// </summary>
+    private FileLoadResult ReadFile(string path)
+    {
+        try
+        {
+            return LoadFile(path);
+        }
+        catch (Exception exception)
+        {
+            return new FileLoadResult([], [new LoadFailure(Path.GetFileName(path), path, exception.Message)]);
+        }
+    }
+
+    /// <summary>
+    /// The failure rows of one file are those of its latest read only: a file added again is not
+    /// listed twice, and one that now loads, once Excel has let go of it, is no longer listed at all.
+    /// </summary>
+    private void ReplaceFailures(string path, IReadOnlyList<LoadFailure> failures)
+    {
+        foreach (LoadFailureViewModel old in Failures.Where(failure => SamePath(failure.SourcePath, path)).ToList())
+        {
+            Failures.Remove(old);
+        }
+
+        foreach (LoadFailure failure in failures)
+        {
+            Failures.Add(new LoadFailureViewModel(failure));
+        }
+    }
+
+    /// <summary>
+    /// Waits until the comparison in force has finished. One started meanwhile, by a change of
+    /// tolerance say, replaces the one waited for, so the wait goes on to the newer one.
+    /// </summary>
+    private async Task WaitForComparisons()
+    {
+        Task waited;
+        do
+        {
+            waited = CurrentComparison;
+            await waited;
+        }
+        while (waited != CurrentComparison);
+    }
+
+    private void UpdateBusy() => IsBusy = _readsInProgress > 0 || _comparing;
 
     [RelayCommand]
     private async Task AddFiles()
@@ -247,6 +327,7 @@ public sealed partial class MainViewModel : ObservableObject
         Failures.Clear();
         _engine.Clear();
         _frame.Reset();
+        _resultsReference = null;
         HasTrajectories = false;
         Reference = null;
     }
@@ -396,6 +477,7 @@ public sealed partial class MainViewModel : ObservableObject
         TrajectoryItemViewModel? reference = Reference;
         if (reference?.Prepared is null)
         {
+            _resultsReference = null;
             foreach (TrajectoryItemViewModel item in Trajectories)
             {
                 item.ShowNotCompared("Choose a reference to compare against");
@@ -413,14 +495,25 @@ public sealed partial class MainViewModel : ObservableObject
         PreparedTrajectory referencePath = reference.Prepared;
         reference.ShowAsReference();
         List<TrajectoryItemViewModel> runs = [.. Trajectories.Where(item => item != reference && item.Prepared is not null)];
-        foreach (TrajectoryItemViewModel run in runs.Where(run => run.Result is null))
+
+        // Results measured against another reference are dropped now, not when the new ones arrive:
+        // until then any redraw would pair their issues, and the point numbers in them, with this one.
+        bool newReference = reference != _resultsReference;
+        _resultsReference = reference;
+        foreach (TrajectoryItemViewModel run in runs.Where(run => newReference || run.Result is null))
         {
             run.ShowNotCompared("Comparing…");
         }
 
+        if (newReference)
+        {
+            RebuildIssuesAndScene();
+        }
+
         var settings = new ComparisonSettings(Tolerance);
         bool fitHeading = FitHeading;
-        IsBusy = true;
+        _comparing = true;
+        UpdateBusy();
         StatusText = $"Comparing {Measure.Plural(runs.Count, "run")} with {reference.Name}…";
         try
         {
@@ -464,7 +557,8 @@ public sealed partial class MainViewModel : ObservableObject
             if (_comparison == cancellation)
             {
                 _comparison = null;
-                IsBusy = false;
+                _comparing = false;
+                UpdateBusy();
             }
         }
     }
@@ -568,59 +662,109 @@ public sealed partial class MainViewModel : ObservableObject
         FocusRequested?.Invoke(this, new FocusRequestedEventArgs(centre - half, centre + half));
     }
 
+    /// <summary>
+    /// What the window is showing, then anything still wrong that the user must not lose sight of: a
+    /// run that could not be compared, settings that could not be saved.
+    /// </summary>
     private void UpdateStatus()
     {
+        var text = new StringBuilder();
         if (!HasTrajectories)
         {
-            StatusText = EmptyStatus;
-            return;
+            text.Append(EmptyStatus);
         }
-
-        if (Reference is null)
+        else if (Reference is null)
         {
-            StatusText = "Choose a reference with the round button on its row.";
-            return;
+            text.Append("Choose a reference with the round button on its row.");
         }
-
-        int runs = Trajectories.Count(item => item != Reference && item.Result is not null);
-        StatusText = $"Reference {Reference.Name} · {Measure.Plural(runs, "run")} compared · "
-            + $"{Measure.Plural(Issues.Count, "issue")} · tolerance {Measure.Metres(Tolerance)}";
-
-        List<TrajectoryItemViewModel> failed = [.. Trajectories.Where(item => item.ComparisonFailure is not null)];
-        if (failed.Count > 0)
+        else
         {
-            string which = failed.Count == 1 ? failed[0].Name : Measure.Plural(failed.Count, "run");
-            StatusText += $" · {which} could not be compared";
+            int runs = Trajectories.Count(item => item != Reference && item.Result is not null);
+            text.Append(CultureInfo.CurrentCulture, $"Reference {Reference.Name} · {Measure.Plural(runs, "run")} compared · ")
+                .Append(CultureInfo.CurrentCulture, $"{Measure.Plural(Issues.Count, "issue")} · tolerance {Measure.Metres(Tolerance)}");
+
+            List<TrajectoryItemViewModel> failed = [.. Trajectories.Where(item => item.ComparisonFailure is not null)];
+            if (failed.Count > 0)
+            {
+                string which = failed.Count == 1 ? failed[0].Name : Measure.Plural(failed.Count, "run");
+                text.Append(CultureInfo.CurrentCulture, $" · {which} could not be compared");
+            }
         }
+
+        if (_settingsProblem is not null)
+        {
+            text.Append(CultureInfo.CurrentCulture, $" · Settings were not saved: {_settingsProblem}");
+        }
+
+        StatusText = text.ToString();
     }
 
+    /// <summary>A failure is shown at once, and stays in the status bar until a save succeeds.</summary>
     private void SaveSettings()
     {
-        string? problem = _settingsStore.Save(new AppSettings(Tolerance, FitHeading, SelectedColourMode.Mode, _lastFolder));
-        if (problem is not null)
+        _settingsProblem = _settingsStore.Save(new AppSettings(Tolerance, FitHeading, SelectedColourMode.Mode, _lastFolder));
+        if (_settingsProblem is not null)
         {
-            StatusText = $"Settings were not saved: {problem}";
+            StatusText = $"Settings were not saved: {_settingsProblem}";
         }
     }
 
-    /// <summary>Files as given, plus the supported files directly inside any folders, in name order.</summary>
-    private static List<string> ExpandFolders(IEnumerable<string> paths)
+    /// <summary>
+    /// Files as given, and the supported files anywhere inside any folders, in path order, every
+    /// path in full so the same file is recognised however it was spelt. Excel's ~$ owner files are
+    /// passed over, and a folder that cannot be listed becomes a failure row of its own.
+    /// </summary>
+    private static DroppedFiles ExpandFolders(IEnumerable<string> paths)
     {
-        var files = new List<string>();
-        foreach (string path in paths)
+        var dropped = new DroppedFiles([], [], []);
+        foreach (string given in paths)
         {
-            if (Directory.Exists(path))
+            string path = FullPath(given);
+            if (!Directory.Exists(path))
             {
-                files.AddRange(Directory.EnumerateFiles(path)
-                    .Where(TrajectoryFileLoader.IsSupported)
-                    .Order(StringComparer.OrdinalIgnoreCase));
+                dropped.Files.Add(path);
+                continue;
             }
-            else
+
+            try
             {
-                files.Add(path);
+                List<string> found = [.. Directory.EnumerateFiles(path, "*", FolderSearch)
+                    .Where(file => TrajectoryFileLoader.IsSupported(file) && !Path.GetFileName(file).StartsWith("~$", StringComparison.Ordinal))
+                    .Order(StringComparer.OrdinalIgnoreCase)];
+                if (found.Count == 0)
+                {
+                    dropped.EmptyFolders.Add(Path.GetFileName(path));
+                }
+
+                dropped.Files.AddRange(found);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                dropped.UnreadableFolders.Add(new LoadFailure(Path.GetFileName(path), path, $"The folder could not be read: {exception.Message}"));
             }
         }
 
-        return files;
+        return dropped;
     }
+
+    private static readonly EnumerationOptions FolderSearch = new() { RecurseSubdirectories = true, IgnoreInaccessible = true };
+
+    private static string FullPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
+
+    private static bool SamePath(string left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    /// <param name="Files">Every file to read.</param>
+    /// <param name="EmptyFolders">The names of folders with nothing in them to read.</param>
+    /// <param name="UnreadableFolders">Folders that could not be listed, as failure rows.</param>
+    private sealed record DroppedFiles(List<string> Files, List<string> EmptyFolders, List<LoadFailure> UnreadableFolders);
 }

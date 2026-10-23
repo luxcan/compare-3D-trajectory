@@ -7,12 +7,18 @@
     .NET install and no Excel - into a stable folder outside the repository, and adds a Start Menu
     entry for it.
 
-    Re-run this after any code change to update the installed copy. Settings live separately in
-    %LOCALAPPDATA%\Compare3DTrajectory and are never touched, so upgrading and uninstalling both keep
-    them.
+    Re-run this after any code change to update the installed copy. The new build is published
+    beside the installed one and only replaces it once the publish has succeeded, so a failed build
+    leaves the working copy in place. Settings live separately in %LOCALAPPDATA%\Compare3DTrajectory
+    and are never touched, so upgrading and uninstalling both keep them.
+
+    Runs in Windows PowerShell 5.1, the shell Windows opens by default, and in PowerShell 7.
 
 .PARAMETER InstallRoot
     Where the published application lives.
+
+.PARAMETER ShortcutFolder
+    Where the Start Menu entry goes; the current user's Start Menu programs folder unless given.
 
 .PARAMETER Uninstall
     Remove the installed application and its Start Menu entry.
@@ -28,6 +34,7 @@
 [CmdletBinding()]
 param(
     [string] $InstallRoot = "$env:LOCALAPPDATA\Programs\Compare3DTrajectory",
+    [string] $ShortcutFolder = [Environment]::GetFolderPath('Programs'),
     [switch] $Uninstall
 )
 
@@ -36,20 +43,29 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $projectPath = Join-Path $repoRoot 'src\Compare3DTrajectory.App\Compare3DTrajectory.App.csproj'
-$executableName = 'Compare3DTrajectory.exe'
+$appName = 'Compare3DTrajectory'
+$executableName = "$appName.exe"
 $shortcutName = 'Compare 3D Trajectory.lnk'
 
-if (-not [System.IO.Path]::IsPathFullyQualified($InstallRoot)) {
+# Only .NET Framework methods, so no Path.IsPathFullyQualified or TrimEndingDirectorySeparator.
+if ($InstallRoot -notmatch '^([A-Za-z]:\\|\\\\)') {
     throw "InstallRoot must be a full path. Windows resolves '$InstallRoot' against the current directory."
 }
-$InstallRoot = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($InstallRoot))
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 
 $executablePath = Join-Path $InstallRoot $executableName
-$startMenuLink = Join-Path ([Environment]::GetFolderPath('Programs')) $shortcutName
+$stagingRoot = "$InstallRoot.publishing"
+$startMenuLink = Join-Path $ShortcutFolder $shortcutName
+
+# The single-file executable unpacks WPF's native libraries here on first run, into a new folder
+# for every build, and nothing else ever removes them.
+$unpackedNatives = Join-Path ([System.IO.Path]::GetTempPath()) ".net\$appName"
 
 function Stop-InstalledApp {
-    $running = @(Get-Process -Name 'Compare3DTrajectory' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase) })
+    # This install's executable and no other: a copy running from "...\Compare3DTrajectory.old" or
+    # a test folder beside it is somebody else's.
+    $running = @(Get-Process -Name $appName -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and [string]::Equals($_.Path, $executablePath, [StringComparison]::OrdinalIgnoreCase) })
     if ($running.Count -eq 0) { return }
 
     Write-Host "Closing the running application ($($running.Count) instance(s))..."
@@ -62,32 +78,67 @@ function Stop-InstalledApp {
     }
 }
 
-function Remove-InstalledFiles {
-    if (Test-Path -LiteralPath $startMenuLink) {
+function Get-ShortcutTarget {
+    param([string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $shell = New-Object -ComObject WScript.Shell
+    try { return $shell.CreateShortcut($Path).TargetPath }
+    finally { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null }
+}
+
+# The Start Menu entry is this install's only when it points at this install's executable, so a
+# second copy installed or removed elsewhere never takes over or deletes the real one's.
+function Test-OurShortcut {
+    $target = Get-ShortcutTarget -Path $startMenuLink
+    return $target -and [string]::Equals($target, $executablePath, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-OurShortcut {
+    if (Test-OurShortcut) {
         Remove-Item -LiteralPath $startMenuLink -Force
         Write-Host "Removed $startMenuLink"
     }
+}
 
-    if (-not (Test-Path -LiteralPath $InstallRoot)) { return }
+function Remove-Folder {
+    param([string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
 
     # Only ever delete a folder that actually holds this application, so a mistyped -InstallRoot
     # cannot take something else with it.
-    $isOurs = Test-Path -LiteralPath $executablePath
-    $isEmpty = -not (Get-ChildItem -LiteralPath $InstallRoot -Force | Select-Object -First 1)
+    $isOurs = Test-Path -LiteralPath (Join-Path $Path $executableName)
+    $isEmpty = -not (Get-ChildItem -LiteralPath $Path -Force | Select-Object -First 1)
     if (-not ($isOurs -or $isEmpty)) {
-        throw "$InstallRoot does not contain $executableName. Refusing to delete it."
+        throw "$Path does not contain $executableName. Refusing to delete it."
     }
 
-    Remove-Item -LiteralPath $InstallRoot -Recurse -Force
-    Write-Host "Removed $InstallRoot"
+    Remove-Item -LiteralPath $Path -Recurse -Force
+    Write-Host "Removed $Path"
+}
+
+function Remove-UnpackedNatives {
+    if (-not (Test-Path -LiteralPath $unpackedNatives)) { return }
+    try {
+        Remove-Item -LiteralPath $unpackedNatives -Recurse -Force
+        Write-Host "Removed $unpackedNatives"
+    }
+    catch {
+        Write-Warning "Could not remove $unpackedNatives, which another running copy may be using: $($_.Exception.Message)"
+    }
 }
 
 function New-Shortcut {
-    param([string] $Path)
+    $target = Get-ShortcutTarget -Path $startMenuLink
+    if ($target -and -not (Test-OurShortcut) -and (Test-Path -LiteralPath $target)) {
+        Write-Warning "The Start Menu entry belongs to the copy in $(Split-Path $target -Parent) and was left alone."
+        return
+    }
 
     $shell = New-Object -ComObject WScript.Shell
     try {
-        $shortcut = $shell.CreateShortcut($Path)
+        $shortcut = $shell.CreateShortcut($startMenuLink)
         $shortcut.TargetPath = $executablePath
         $shortcut.WorkingDirectory = $InstallRoot
         $shortcut.Description = 'Compare simulation trajectories in 3D and find where a run went wrong'
@@ -97,28 +148,38 @@ function New-Shortcut {
     finally {
         [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
     }
-    Write-Host "Created $Path"
+    Write-Host "Created $startMenuLink"
 }
 
-Stop-InstalledApp
-
 if ($Uninstall) {
-    Remove-InstalledFiles
+    Stop-InstalledApp
+    Remove-OurShortcut
+    Remove-Folder -Path $InstallRoot
+    Remove-UnpackedNatives
     Write-Host ''
     Write-Host 'Uninstalled. Your settings are still in %LOCALAPPDATA%\Compare3DTrajectory.'
     return
 }
 
-Remove-InstalledFiles
+# Publish beside the installed copy first; it is replaced only once the new build is complete.
+Remove-Folder -Path $stagingRoot
+Write-Host "Publishing to $stagingRoot ..."
+dotnet publish $projectPath --configuration Release --output $stagingRoot --nologo
+if ($LASTEXITCODE -ne 0) {
+    if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
+    throw "dotnet publish failed with exit code $LASTEXITCODE. The installed copy, if any, is unchanged."
+}
+if (-not (Test-Path -LiteralPath (Join-Path $stagingRoot $executableName))) {
+    throw "Publish finished but $executableName is missing from $stagingRoot."
+}
 
-Write-Host "Publishing to $InstallRoot ..."
-dotnet publish $projectPath --configuration Release --output $InstallRoot --nologo
-if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
-if (-not (Test-Path -LiteralPath $executablePath)) { throw "Publish finished but $executablePath is missing." }
+Stop-InstalledApp
+Remove-Folder -Path $InstallRoot
+Move-Item -LiteralPath $stagingRoot -Destination $InstallRoot
+Remove-UnpackedNatives
+New-Shortcut
 
-New-Shortcut -Path $startMenuLink
-
-$version = (Get-Item $executablePath).VersionInfo.ProductVersion
+$version = (Get-Item -LiteralPath $executablePath).VersionInfo.ProductVersion
 Write-Host ''
 Write-Host "Compare 3D Trajectory $version is installed."
 Write-Host '  Start Menu   search for "Compare 3D Trajectory"'

@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Media3D;
+using System.Windows.Threading;
 using HelixToolkit;
 using HelixToolkit.Maths;
 using HelixToolkit.SharpDX;
@@ -39,10 +39,23 @@ public partial class TrajectoryViewport : UserControl
     private static readonly TimeSpan HoverInterval = TimeSpan.FromMilliseconds(40);
 
     private readonly Dictionary<Element3D, SceneLine> _hoverable = [];
+    private readonly TrailingThrottle _hover;
     private DefaultEffectsManager? _effects;
-    private DateTime _lastHover;
 
-    public TrajectoryViewport() => InitializeComponent();
+    public TrajectoryViewport()
+    {
+        InitializeComponent();
+        _hover = new TrailingThrottle(HoverInterval, () => DateTime.UtcNow, (delay, run) =>
+        {
+            var timer = new DispatcherTimer(DispatcherPriority.Input) { Interval = delay };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                run();
+            };
+            timer.Start();
+        });
+    }
 
     public SceneModel Scene
     {
@@ -50,55 +63,35 @@ public partial class TrajectoryViewport : UserControl
         set => SetValue(SceneProperty, value);
     }
 
-    /// <summary>
-    /// A whole route is long and flat, so its bounding sphere is far bigger than what the camera sees
-    /// of it from above at an angle; coming in to this share of the sphere's distance fills the view
-    /// without cutting off the ends.
-    /// </summary>
-    private const double FitAllCloseness = 0.75;
-
     /// <summary>Frames everything drawn, keeping the current viewing direction.</summary>
     public void FitAll()
     {
-        if (BoundsOf(Scene.Lines.Where(line => !line.IsSegments).SelectMany(line => line.Positions)) is { } bounds)
+        Vector3[] drawn = [.. Scene.Lines.Where(line => !line.IsSegments).SelectMany(line => line.Positions)];
+        if (drawn.Length > 0 && View.Camera is ProjectionCamera camera)
         {
-            Frame(bounds, FitAllCloseness);
+            MoveTo(camera, CameraFraming.FitAll(drawn, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight));
         }
     }
 
     /// <summary>Frames one box, given in render coordinates.</summary>
     public void FocusOn(Vector3 min, Vector3 max)
     {
-        if (BoundsOf([min, max]) is { } bounds)
+        if (View.Camera is ProjectionCamera camera)
         {
-            Frame(bounds, 1);
+            MoveTo(camera, CameraFraming.Focus(min, max, camera.LookDirection, camera.UpDirection, FieldOfView(camera), WidthOverHeight));
         }
     }
+
+    private double WidthOverHeight => View.ActualWidth > 0 && View.ActualHeight > 0 ? View.ActualWidth / View.ActualHeight : 1;
+
+    private static double FieldOfView(ProjectionCamera camera) => camera is PerspectiveCamera perspective ? perspective.FieldOfView : 45;
 
     /// <summary>
-    /// Moves the camera so the box's bounding sphere just fits the narrower of the two fields of view,
-    /// looking the same way as before with Z still up. HelixToolkit's own ZoomExtents also turned the
-    /// camera, which lost the user's chosen angle every time an issue was picked.
+    /// Moves the camera, looking the same way as before. HelixToolkit's own ZoomExtents also turned
+    /// the camera, which lost the user's chosen angle every time an issue was picked.
     /// </summary>
-    private void Frame(Rect3D bounds, double closeness)
-    {
-        if (View.Camera is not ProjectionCamera camera)
-        {
-            return;
-        }
-
-        var centre = new Point3D(bounds.X + (bounds.SizeX / 2), bounds.Y + (bounds.SizeY / 2), bounds.Z + (bounds.SizeZ / 2));
-        double radius = Math.Max(1, 0.5 * Math.Sqrt((bounds.SizeX * bounds.SizeX) + (bounds.SizeY * bounds.SizeY) + (bounds.SizeZ * bounds.SizeZ)));
-        // Direct3D's convention: the camera's field of view is the vertical one.
-        double vertical = (camera is PerspectiveCamera perspective ? perspective.FieldOfView : 45) * Math.PI / 180;
-        double widthOverHeight = View.ActualWidth > 0 && View.ActualHeight > 0 ? View.ActualWidth / View.ActualHeight : 1;
-        double horizontal = 2 * Math.Atan(Math.Tan(vertical / 2) * widthOverHeight);
-        double distance = closeness * radius / Math.Sin(Math.Min(horizontal, vertical) / 2);
-
-        Vector3D direction = camera.LookDirection;
-        direction.Normalize();
-        camera.AnimateTo(centre - (direction * distance), direction * distance, new Vector3D(0, 0, 1), ZoomMilliseconds);
-    }
+    private static void MoveTo(ProjectionCamera camera, CameraPlacement placement) =>
+        camera.AnimateTo(placement.Position, placement.LookDirection, placement.UpDirection, ZoomMilliseconds);
 
     /// <summary>
     /// The GPU device lives only while the control is on screen; leaving it to the finaliser would
@@ -202,18 +195,17 @@ public partial class TrajectoryViewport : UserControl
     {
         if (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed || e.MiddleButton == MouseButtonState.Pressed)
         {
+            _hover.Cancel();
             HoverCard.Visibility = Visibility.Collapsed;
             return;
         }
 
-        DateTime now = DateTime.UtcNow;
-        if (now - _lastHover < HoverInterval)
-        {
-            return;
-        }
-
-        _lastHover = now;
         Point pointer = e.GetPosition(View);
+        _hover.Submit(() => ShowWhatIsAt(pointer));
+    }
+
+    private void ShowWhatIsAt(Point pointer)
+    {
         foreach (HitTestResult hit in View.FindHits(pointer))
         {
             if (hit is LineHitTestResult lineHit && hit.ModelHit is Element3D element && _hoverable.TryGetValue(element, out SceneLine? line))
@@ -227,7 +219,11 @@ public partial class TrajectoryViewport : UserControl
         HoverCard.Visibility = Visibility.Collapsed;
     }
 
-    private void OnViewMouseLeave(object sender, MouseEventArgs e) => HoverCard.Visibility = Visibility.Collapsed;
+    private void OnViewMouseLeave(object sender, MouseEventArgs e)
+    {
+        _hover.Cancel();
+        HoverCard.Visibility = Visibility.Collapsed;
+    }
 
     /// <summary>Places the card beside the pointer, flipping to the other side near the edges.</summary>
     private void ShowHover(string text, Point pointer)
@@ -240,27 +236,6 @@ public partial class TrajectoryViewport : UserControl
         double top = pointer.Y + 16 + size.Height > ActualHeight ? pointer.Y - 16 - size.Height : pointer.Y + 16;
         Canvas.SetLeft(HoverCard, Math.Max(0, left));
         Canvas.SetTop(HoverCard, Math.Max(0, top));
-    }
-
-    private static Rect3D? BoundsOf(IEnumerable<Vector3> positions)
-    {
-        Vector3 min = new(float.MaxValue);
-        Vector3 max = new(float.MinValue);
-        bool any = false;
-        foreach (Vector3 position in positions)
-        {
-            min = Vector3.Min(min, position);
-            max = Vector3.Max(max, position);
-            any = true;
-        }
-
-        if (!any)
-        {
-            return null;
-        }
-
-        Vector3 size = max - min;
-        return new Rect3D(min.X, min.Y, min.Z, size.X, size.Y, size.Z);
     }
 
     private static Color4 ToColor4(Color colour) => new(colour.R / 255f, colour.G / 255f, colour.B / 255f, colour.A / 255f);

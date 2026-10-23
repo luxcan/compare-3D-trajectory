@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\RepositoryFiles.cs" Link="RepositoryFiles.cs" />
+    <Compile Include="..\Compare3DTrajectory.Core.Tests\Loading\ExcelFixture.cs" Link="ExcelFixture.cs" />
   </ItemGroup>
 
   <ItemGroup>
