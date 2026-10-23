@@ -526,6 +526,62 @@ public sealed class MainViewModelTests : IDisposable
         viewModel.IsBusy.Should().BeFalse();
     }
 
+    /// <summary>
+    /// F17: a local file switched to geocentric and back left the East-North-Up origin near the
+    /// Earth's centre, so every geocentric file after it was turned and tilted and no longer fitted.
+    /// </summary>
+    [Fact]
+    public async Task ToggleCoordinateKind_LocalFileThereAndBack_LeavesLaterFilesFitting()
+    {
+        MainViewModel viewModel = Create();
+        string local = Path.Combine(_folder, "local.csv");
+        await File.WriteAllTextAsync(local, "x,y,z\n0,0,0\n10,0,0\n20,5,0\n");
+        await viewModel.AddFilesAsync([local]);
+        TrajectoryItemViewModel item = Item(viewModel, "local.csv");
+        viewModel.ToggleCoordinateKindCommand.Execute(item);
+        viewModel.ToggleCoordinateKindCommand.Execute(item);
+        await viewModel.CurrentComparison;
+
+        await viewModel.AddFilesAsync(
+        [
+            Path.Combine(RepositoryFiles.Samples, "model.csv"),
+            Path.Combine(RepositoryFiles.Samples, "run-moved-and-turned.xlsx"),
+            Path.Combine(RepositoryFiles.Samples, "run-good.csv"),
+        ]);
+        Item(viewModel, "model.csv").IsReference = true;
+        await viewModel.CurrentComparison;
+
+        Item(viewModel, "run-moved-and-turned.xlsx").VerdictText.Should().Be("✓ Follows the reference within 2.00 m");
+        Item(viewModel, "run-good.csv").VerdictText.Should().Be("✓ Follows the reference within 2.00 m");
+    }
+
+    /// <summary>
+    /// F19: with fitting off, a local run against a geocentric reference was placed by the first point
+    /// of whichever geocentric file happened to load first, not by the reference.
+    /// </summary>
+    [Fact]
+    public async Task FitHeadingOff_LocalRunAgainstAGeocentricReference_DoesNotDependOnWhatLoadedFirst()
+    {
+        string local = Path.Combine(_folder, "local.csv");
+        await File.WriteAllTextAsync(local, "x,y,z\n0,0,0\n10,0,0\n20,0,0\n30,0,0\n");
+        string elsewhere = Path.Combine(_folder, "elsewhere.csv");
+        Vec3 a = Core.Geo.Wgs84.ToEcef(new Core.Geo.GeodeticPosition(1.9, 104.1, 30));
+        Vec3 b = Core.Geo.Wgs84.ToEcef(new Core.Geo.GeodeticPosition(1.901, 104.1, 30));
+        await File.WriteAllTextAsync(elsewhere, FormattableString.Invariant($"x,y,z\n{a.X:R},{a.Y:R},{a.Z:R}\n{b.X:R},{b.Y:R},{b.Z:R}\n"));
+        string model = Path.Combine(RepositoryFiles.Samples, "model.csv");
+        AppSettings fitOff = AppSettings.Default with { FitHeading = false };
+
+        MainViewModel alone = Create(store: new MemorySettingsStore(fitOff));
+        await alone.AddFilesAsync([model, local]);
+        MainViewModel afterAnother = Create(store: new MemorySettingsStore(fitOff));
+        await afterAnother.AddFilesAsync([elsewhere, model, local]);
+        Item(afterAnother, "model.csv").IsReference = true;
+        await afterAnother.CurrentComparison;
+
+        Item(afterAnother, "local.csv").Result!.Summary.MaxDeviation
+            .Should().BeApproximately(Item(alone, "local.csv").Result!.Summary.MaxDeviation, 1e-6);
+    }
+
     private static TrajectoryItemViewModel Item(MainViewModel viewModel, string name) =>
         viewModel.Trajectories.Single(item => item.Name == name);
 

@@ -29,10 +29,14 @@ public sealed class PolylineIndex
         ArgumentNullException.ThrowIfNull(polyline);
         _polyline = polyline;
 
-        double target = polyline.Length / polyline.SegmentCount;
-        var pieces = new List<Piece>(polyline.SegmentCount);
+        // Zero-length segments add nothing their neighbours do not, and a long wait in one place
+        // brings thousands of them: as pieces of their own, and by shrinking the average length the
+        // rest is cut to, they made every query near the wait measure them all.
+        List<int> moving = [.. Enumerable.Range(0, polyline.SegmentCount).Where(segment => SegmentLength(polyline, segment) > 0)];
+        double target = moving.Count > 0 ? polyline.Length / moving.Count : 0;
+        var pieces = new List<Piece>(moving.Count);
         double longestPiece = 0;
-        for (int segment = 0; segment < polyline.SegmentCount; segment++)
+        foreach (int segment in moving.Count > 0 ? moving : [0])
         {
             Vec3 start = polyline.Points[segment];
             Vec3 end = polyline.Points[segment + 1];
@@ -59,6 +63,9 @@ public sealed class PolylineIndex
 
     public Polyline Polyline => _polyline;
 
+    /// <summary>How many pieces the path was cut into; for tests of the index's size.</summary>
+    internal int PieceCount => _pieces.Length;
+
     public NearestPoint Nearest(Vec3 query)
     {
         int seed = _tree.Nearest(query, out _);
@@ -78,6 +85,8 @@ public sealed class PolylineIndex
 
         return best;
     }
+
+    private static double SegmentLength(Polyline polyline, int segment) => polyline.ArcLengthAt(segment + 1) - polyline.ArcLengthAt(segment);
 
     private NearestPoint Measure(int pieceIndex, Vec3 query)
     {

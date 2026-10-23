@@ -30,6 +30,32 @@ public class PolylineIndexTests
         }
     }
 
+    /// <summary>
+    /// F29: a long wait in one place gave thousands of zero-length segments, which both became pieces
+    /// of their own and shrank the piece length for the rest of the path, so a query near the wait
+    /// measured every one of them and comparison time grew with the square of the wait.
+    /// </summary>
+    [Fact]
+    public void Constructor_LongWaitInOnePlace_KeepsTheIndexSmall()
+    {
+        List<Vec3> points = [.. Enumerable.Repeat(Vec3.Zero, 20_000), .. Enumerable.Range(1, 100).Select(i => new Vec3(i, 0, 0))];
+
+        var index = new PolylineIndex(new Polyline(points));
+
+        index.PieceCount.Should().BeLessThan(200);
+        NearestPoint found = index.Nearest(new Vec3(0.5, 3, 0));
+        found.Distance.Should().BeApproximately(3, 1e-9);
+        found.ArcLength.Should().BeApproximately(0.5, 1e-9);
+    }
+
+    [Fact]
+    public void Nearest_PathThatNeverMoves_IsItsOnlyPoint()
+    {
+        var index = new PolylineIndex(new Polyline([.. Enumerable.Repeat(new Vec3(5, 5, 5), 10)]));
+
+        index.Nearest(new Vec3(5, 9, 8)).Distance.Should().BeApproximately(5, 1e-9);
+    }
+
     [Fact]
     public void Nearest_PointBesideSecondSegment_ReportsSegmentAndDistanceAlong()
     {

@@ -1,7 +1,11 @@
+using System.Globalization;
 using Compare3DTrajectory.Core.Comparison;
+using Compare3DTrajectory.Core.Geo;
+using Compare3DTrajectory.Core.Geometry;
 using Compare3DTrajectory.Core.Loading;
 using Compare3DTrajectory.Core.Tests.Loading;
 using Compare3DTrajectory.Core.Tests.Samples;
+using Compare3DTrajectory.Core.Tests.Synthetic;
 
 namespace Compare3DTrajectory.Core.Tests;
 
@@ -139,6 +143,30 @@ public sealed class TrajectoryComparisonTests : IDisposable
 
         compare.Should().Throw<ArgumentOutOfRangeException>();
     }
+
+    /// <summary>
+    /// F61: the same 30 km pattern flown 20 km further north lies tilted and sunk in the reference's
+    /// flat frame, and a fit that only turns about the vertical and moves left false issues on it.
+    /// </summary>
+    [Fact]
+    public void Compare_SameShapeDisplacedOverTheEarth_Passes()
+    {
+        Route pattern = new Route { Height = _ => 3000 }.Straight(10_000).Turn(2_000, 90).Straight(8_000).Turn(2_000, 90).Straight(6_000);
+        var here = new LocalFrame(Wgs84.ToEcef(new GeodeticPosition(1.3521, 103.8198, 0)));
+        var north = new LocalFrame(Wgs84.ToEcef(new GeodeticPosition(1.3521 + (20_000 / 110_574.0), 103.8198, 0)));
+        string reference = WriteEcef("reference.csv", pattern.Sample(50).Select(here.ToEcef));
+        string run = WriteEcef("run.csv", pattern.Sample(50).Select(north.ToEcef));
+
+        ComparisonReport report = TrajectoryComparison.Compare(reference, run, new ComparisonOptions { Tolerance = 5 });
+
+        report.Passed.Should().BeTrue();
+        report.Summary.MaxDeviation.Should().BeLessThan(0.5);
+        report.Fit.CentroidShift.Length.Should().BeApproximately(20_000, 200);
+        report.Fit.TurnDegrees.Should().BeApproximately(0, 0.01);
+    }
+
+    private string WriteEcef(string name, IEnumerable<Vec3> points) =>
+        _folder.WriteText(name, "x,y,z\n" + string.Join('\n', points.Select(point => string.Create(CultureInfo.InvariantCulture, $"{point.X:R},{point.Y:R},{point.Z:R}"))));
 
     [Fact]
     public void Compare_Cancelled_Throws()

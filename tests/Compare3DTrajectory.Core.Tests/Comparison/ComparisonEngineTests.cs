@@ -49,6 +49,41 @@ public class ComparisonEngineTests
         engine.CachedFitCount.Should().Be(1);
     }
 
+    /// <summary>
+    /// F22: fits were cached by the trajectories' ids alone, so after a file's points changed, as on a
+    /// switch between local and geocentric, a fit for the old points could be used on the new ones.
+    /// </summary>
+    [Fact]
+    public void Compare_SameIdWithNewPoints_FitsTheNewPoints()
+    {
+        var engine = new ComparisonEngine();
+        var reference = new PreparedTrajectory(Guid.NewGuid(), Route.Sample(10));
+        Guid id = Guid.NewGuid();
+        var before = new PreparedTrajectory(id, Noise.Move(Route.Sample(1), 0, new Vec3(100, 0, 0)));
+        var after = new PreparedTrajectory(id, Noise.Move(Route.Sample(1), 0, new Vec3(-300, 0, 0)));
+        engine.Compare(reference, before, new ComparisonSettings(1), fitHeading: true);
+
+        ComparisonResult result = engine.Compare(reference, after, new ComparisonSettings(1), fitHeading: true);
+
+        result.Issues.Should().BeEmpty();
+        result.Fit.CentroidShift.X.Should().BeApproximately(300, 0.5);
+    }
+
+    /// <summary>F26: a parked entity 6.5 km away was fitted onto the path and read as 100% on it.</summary>
+    [Fact]
+    public void Compare_RunThatNeverMoves_IsComparedWhereItIs()
+    {
+        var engine = new ComparisonEngine();
+        var reference = new PreparedTrajectory(Guid.NewGuid(), Route.Sample(10));
+        var parked = new PreparedTrajectory(Guid.NewGuid(), [.. Enumerable.Repeat(new Vec3(5000, 5000, 10), 50)]);
+
+        ComparisonResult result = engine.Compare(reference, parked, new ComparisonSettings(2), fitHeading: true);
+
+        result.Fit.IsFitted.Should().BeFalse();
+        result.Summary.WithinTolerancePercent.Should().Be(0);
+        result.Issues.Should().Contain(issue => issue.Kind == IssueKind.OffPath);
+    }
+
     [Fact]
     public void Forget_Trajectory_DropsEveryFitItIsPartOf()
     {

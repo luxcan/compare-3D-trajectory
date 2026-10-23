@@ -11,7 +11,10 @@ namespace Compare3DTrajectory.Core.Comparison;
 /// reference; otherwise it is a point of the run.
 /// </param>
 /// <param name="LastIndex">The last point of the stretch, on the same path as <paramref name="FirstIndex"/>.</param>
-/// <param name="Length">Metres along that path.</param>
+/// <param name="Length">
+/// Metres along the reference: for a miss, how much of it was missed; otherwise, from where the run
+/// left the reference to where it came back.
+/// </param>
 /// <param name="WorstDeviation">The farthest the stretch gets from the other path, in metres.</param>
 /// <param name="WorstPoint">Where that happens, in working metres.</param>
 /// <param name="Path">The stretch itself, in working metres, for drawing it and framing the view on it.</param>

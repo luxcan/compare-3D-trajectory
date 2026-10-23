@@ -37,10 +37,14 @@ public static class TrajectoryComparison
         LoadedTrajectory reference = Load(referencePath);
         LoadedTrajectory run = Load(runPath);
 
-        // The reference goes through the frame first, so the East-North-Up origin is on it.
+        // The reference goes through the frame first, so the East-North-Up origin is on it. The run
+        // is fitted in its own level frame, so one recorded far away is not tilted by the Earth's curve.
         var frame = new WorkingFrame();
         var preparedReference = new PreparedTrajectory(Guid.NewGuid(), frame.ToWorking(reference.Points, reference.DetectedKind));
-        var preparedRun = new PreparedTrajectory(Guid.NewGuid(), frame.ToWorking(run.Points, run.DetectedKind));
+        var preparedRun = new PreparedTrajectory(
+            Guid.NewGuid(),
+            frame.ToWorking(run.Points, run.DetectedKind),
+            WorkingFrame.ToLevel(run.Points, run.DetectedKind));
         ComparisonResult result = new ComparisonEngine().Compare(preparedReference, preparedRun, settings, options.FitHeading, cancellationToken);
 
         return ComparisonReport.From(reference, run, settings.Tolerance, result);

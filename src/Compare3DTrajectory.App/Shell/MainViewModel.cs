@@ -361,7 +361,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         item.Kind = item.Kind == CoordinateKind.Geocentric ? CoordinateKind.Local : CoordinateKind.Geocentric;
         _engine.Forget(item.Id);
-        item.Prepared = new PreparedTrajectory(item.Id, _frame.ToWorking(item.Loaded.Points, item.Kind));
+        item.Prepared = Prepare(item);
         StartComparison();
     }
 
@@ -437,10 +437,35 @@ public sealed partial class MainViewModel : ObservableObject
     private void AddTrajectory(LoadedTrajectory loaded)
     {
         var item = new TrajectoryItemViewModel(loaded, _palette.FileColour(_nextColour++));
-        item.Prepared = new PreparedTrajectory(item.Id, _frame.ToWorking(loaded.Points, item.Kind));
+        item.Prepared = Prepare(item);
         item.PropertyChanged += OnTrajectoryPropertyChanged;
         Trajectories.Add(item);
         HasTrajectories = true;
+    }
+
+    /// <summary>The file in working metres, and in its own level frame for fitting.</summary>
+    private PreparedTrajectory Prepare(TrajectoryItemViewModel item) =>
+        new(item.Id, _frame.ToWorking(item.Loaded.Points, item.Kind), WorkingFrame.ToLevel(item.Loaded.Points, item.Kind));
+
+    /// <summary>
+    /// Puts the East-North-Up origin on a geocentric reference, and every file into working metres
+    /// again when that moves it. Where a run lands then depends on the reference alone, not on which
+    /// file happened to be opened first, and "up" is the true vertical where the reference is.
+    /// </summary>
+    private bool AnchorFrameOn(TrajectoryItemViewModel reference)
+    {
+        if (reference.Kind != CoordinateKind.Geocentric || !_frame.Anchor(reference.Loaded.Points))
+        {
+            return false;
+        }
+
+        _engine.Clear();
+        foreach (TrajectoryItemViewModel item in Trajectories)
+        {
+            item.Prepared = Prepare(item);
+        }
+
+        return true;
     }
 
     private void OnTrajectoryPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -492,13 +517,15 @@ public sealed partial class MainViewModel : ObservableObject
         _comparison = cancellation;
         CancellationToken token = cancellation.Token;
 
-        PreparedTrajectory referencePath = reference.Prepared;
+        bool reanchored = AnchorFrameOn(reference);
+        PreparedTrajectory referencePath = reference.Prepared!;
         reference.ShowAsReference();
         List<TrajectoryItemViewModel> runs = [.. Trajectories.Where(item => item != reference && item.Prepared is not null)];
 
-        // Results measured against another reference are dropped now, not when the new ones arrive:
-        // until then any redraw would pair their issues, and the point numbers in them, with this one.
-        bool newReference = reference != _resultsReference;
+        // Results measured against another reference, or in a frame since moved, are dropped now,
+        // not when the new ones arrive: until then any redraw would pair their issues, and the point
+        // numbers in them, with this reference.
+        bool newReference = reference != _resultsReference || reanchored;
         _resultsReference = reference;
         foreach (TrajectoryItemViewModel run in runs.Where(run => newReference || run.Result is null))
         {

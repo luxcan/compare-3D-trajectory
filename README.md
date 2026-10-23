@@ -11,7 +11,11 @@ is listed.
 | --- | --- |
 | **Detour** | The run left the reference path by more than the tolerance and came back. |
 | **Off path at start / end** | The run began or finished away from the reference path. |
+| **Off path all the way** | The run is nowhere on the reference: often a file read the wrong way, or a run in the wrong place. |
 | **Missed** | A stretch of the reference the run never came within tolerance of, such as a cut corner. |
+
+Every issue's length is measured along the reference, from where the run left it to where it came
+back, so noise in a run's recording cannot lengthen it.
 
 Runs are coloured point by point: green within tolerance, amber up to twice it, red beyond.
 Selecting an issue zooms the view to it. Hovering a line shows the point's line number in its file,
@@ -21,9 +25,19 @@ its original x, y, z and, for geocentric files, its latitude, longitude and heig
 
 With **Fit position and heading** on, each run is first moved and turned about the vertical to fit
 the reference best, so only differences of shape are reported. It is never tilted or scaled, so a
-left turn can never be fitted onto a right turn. Each row says how far its run was moved and turned,
-so a run that was simply in the wrong place is still visible. Turn the fit off to compare positions
-exactly as recorded.
+left turn can never be fitted onto a right turn. Each row says how far its run was moved, across and
+up or down, and turned, so a run that was simply in the wrong place is still visible. Turn the fit
+off to compare positions exactly as recorded.
+
+- **Part of the reference, or more:** a run that stops early, starts late, overruns or strays for
+  part of its length is fitted on the part that follows the reference, up to half of it.
+- **Alike either way:** where two fits are as good, such as a straight leg either way round, the one
+  that moves and turns the run least from where it was recorded wins.
+- **Far away:** a geocentric run is fitted in its own level frame, so one recorded tens of
+  kilometres from the reference is moved over the curve of the Earth rather than tilted by it.
+- **Never moves:** a run that stays in one place has no shape to fit, and is compared where it is.
+- **Where "up" is:** geocentric files are laid out in an East-North-Up frame on the reference, so
+  where a run lands never depends on which file was opened first.
 
 ## Files
 

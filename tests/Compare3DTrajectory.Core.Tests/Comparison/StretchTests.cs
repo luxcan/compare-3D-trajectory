@@ -37,6 +37,18 @@ public class StretchTests
         Stretch.Find([0, 0, 3, 4], index => index, tolerance: 1).Should().Equal(new Stretch(2, 3));
     }
 
+    /// <summary>
+    /// F27: a run that strays briefly and then goes on steadily just inside tolerance, but above 80%
+    /// of it, never ended its stretch: three points became an issue to the end of the run.
+    /// </summary>
+    [Fact]
+    public void Find_ShortExcursionThenSteadyJustInsideTolerance_EndsAtTheExcursion()
+    {
+        double[] distances = [.. Enumerable.Range(0, 1001).Select(i => i is >= 10 and <= 12 ? 2.5 : 1.8)];
+
+        Stretch.Find(distances, index => index, tolerance: 2).Should().Equal(new Stretch(10, 12));
+    }
+
     [Fact]
     public void Find_AllWithinTolerance_FindsNothing()
     {

@@ -98,6 +98,78 @@ public class TrajectoryComparerTests
         result.AlignedPoints.Should().BeSameAs(points);
     }
 
+    /// <summary>
+    /// F28: the reference was sampled evenly along its length, which steps over its corners, so a
+    /// corner cut a little beyond tolerance was never seen.
+    /// </summary>
+    [Theory]
+    [InlineData(100.0)]
+    [InlineData(100.3)]
+    [InlineData(101.7)]
+    [InlineData(123.45)]
+    public void Compare_CornerCutJustBeyondTolerance_IsMissedWhereverTheCornerFalls(double corner)
+    {
+        List<Vec3> model = [new(0, 0, 0), new(corner, 0, 0), new(corner, 200, 0)];
+        List<Vec3> run = [.. Line(new Vec3(0, 0, 0), new Vec3(corner - 4.5, 0, 0), 0.5), .. Line(new Vec3(corner - 4.5, 0, 0), new Vec3(corner, 4.5, 0), 0.5), .. Line(new Vec3(corner, 4.5, 0), new Vec3(corner, 200, 0), 0.5)];
+
+        ComparisonResult result = TrajectoryComparer.Compare(new PreparedTrajectory(Guid.NewGuid(), model), run, HeadingFit.None, new ComparisonSettings(3));
+
+        TrajectoryIssue missed = result.Issues.Should().ContainSingle(issue => issue.Kind == IssueKind.Missed).Subject;
+        missed.WorstDeviation.Should().BeApproximately(3.18, 0.01);
+    }
+
+    /// <summary>F30: a miss of one sample just past a corner gave the next vertex, 100 m on, as both its ends.</summary>
+    [Fact]
+    public void Compare_OneSampleMissJustPastACorner_RangeTakesInTheCorner()
+    {
+        List<Vec3> model = [new(0, 0, 0), new(100, 0, 0), new(200.2, 0, 0), new(200.2, 100, 0), new(200.2, 200, 0)];
+        List<Vec3> run = [.. Line(new Vec3(0, 0, 0), new Vec3(195.25, 0, 0), 0.5), .. Line(new Vec3(195.25, 0, 0), new Vec3(200.2, 4.95, 0), 0.5), .. Line(new Vec3(200.2, 4.95, 0), new Vec3(200.2, 200, 0), 0.5)];
+
+        ComparisonResult result = TrajectoryComparer.Compare(new PreparedTrajectory(Guid.NewGuid(), model), run, HeadingFit.None, new ComparisonSettings(3));
+
+        TrajectoryIssue missed = result.Issues.Should().ContainSingle(issue => issue.Kind == IssueKind.Missed).Subject;
+        missed.FirstIndex.Should().Be(2);
+        missed.LastIndex.Should().BeInRange(2, 3);
+        missed.Length.Should().BeGreaterThan(0);
+    }
+
+    /// <summary>F59: a one-row detour was listed as 0.00 m long.</summary>
+    [Fact]
+    public void Compare_OneRowSpike_HasTheLengthOfPathItSpans()
+    {
+        List<Vec3> run = Route.Sample(1);
+        run[800] += new Vec3(0, 0, 50);
+
+        ComparisonResult result = Compare(Route.Sample(10), run);
+
+        TrajectoryIssue detour = result.Issues.Should().ContainSingle(issue => issue.Kind == IssueKind.Detour).Subject;
+        detour.FirstIndex.Should().Be(800);
+        detour.Length.Should().BeApproximately(2, 0.2);
+    }
+
+    /// <summary>F81: a detour's length was measured along the run's own noise, a 60 m detour reading 40% longer.</summary>
+    [Fact]
+    public void Compare_DetourOfANoisyRun_IsMeasuredAlongTheReference()
+    {
+        List<Vec3> run = Noise.Jitter(
+            Route.SampleWith(1, (s, position, heading) => Route.Detour(s, position, heading, 500, 560, 30)),
+            sigma: 0.6,
+            seed: 8);
+
+        // Judged at 5 m, well clear of the noise, so the 30 m detour is the only issue.
+        ComparisonResult result = TrajectoryComparer.Compare(
+            new PreparedTrajectory(Guid.NewGuid(), Route.Sample(10)), run, HeadingFit.None, new ComparisonSettings(5));
+
+        TrajectoryIssue detour = result.Issues.Should().ContainSingle(issue => issue.Kind == IssueKind.Detour).Subject;
+        detour.Length.Should().BeInRange(45, 65);
+    }
+
+    private static IEnumerable<Vec3> Line(Vec3 from, Vec3 to, double spacing)
+    {
+        int steps = Math.Max(1, (int)Math.Ceiling(from.DistanceTo(to) / spacing));
+        return Enumerable.Range(0, steps).Select(i => Vec3.Lerp(from, to, (double)i / steps));
+    }
+
     private static ComparisonResult Compare(List<Vec3> reference, List<Vec3> run) =>
         TrajectoryComparer.Compare(new PreparedTrajectory(Guid.NewGuid(), reference), run, HeadingFit.None, TwoMetres);
 }

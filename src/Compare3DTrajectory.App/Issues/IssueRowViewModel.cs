@@ -17,9 +17,13 @@ public sealed class IssueRowViewModel
         Run = run;
         Issue = issue;
 
+        // Off the path from the first point to the last is the plainest sign of a file read the wrong
+        // way, or a run in the wrong place, so it is said as such rather than as a bad start.
+        bool allTheWay = issue.FirstIndex == 0 && issue.LastIndex == run.Loaded.Points.Count - 1;
         KindText = issue.Kind switch
         {
             IssueKind.Detour => "Detour",
+            IssueKind.OffPath when allTheWay => "Off path all the way",
             IssueKind.OffPath => issue.FirstIndex == 0 ? "Off path at start" : "Off path at end",
             _ => "Missed",
         };
