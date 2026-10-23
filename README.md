@@ -66,6 +66,30 @@ It runs in Windows PowerShell 5.1 as well as PowerShell 7. A new build replaces 
 only once its publish has succeeded. `-Uninstall` removes it again, with the native libraries it
 unpacks into `%TEMP%`. Settings are kept in `%LOCALAPPDATA%\Compare3DTrajectory`.
 
+## Use from another .NET application
+
+Reference `src/Compare3DTrajectory.Core` (plain .NET 10, no UI) and make one call. It reads and
+screens both files, lays geocentric ones out in one East-North-Up frame and fits the run, exactly
+as the window does:
+
+```csharp
+ComparisonReport report = TrajectoryComparison.Compare(
+    referencePath, runPath, new ComparisonOptions { Tolerance = 2, FitHeading = true });
+
+if (!report.Passed)
+{
+    foreach (ReportedIssue issue in report.Issues)
+    {
+        // issue.Kind, issue.SourcePath, issue.FirstLine..issue.LastLine, issue.WorstDeviation
+    }
+}
+```
+
+A file that gives no trajectory throws `TrajectoryFileException`; one of numbers without a header
+throws it with the same "Please add in the header for x, y, z" message the window shows. To let
+someone look, start the window with the same paths, reference first:
+`Compare3DTrajectory.exe reference.csv run.csv`.
+
 ## Develop
 
 ```powershell

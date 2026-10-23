@@ -47,6 +47,21 @@ public sealed class MainViewModelTests : IDisposable
         viewModel.IsBusy.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Another application shows its comparison by starting the window with the reference path
+    /// first, so the first path given is the reference, whatever the names sort to.
+    /// </summary>
+    [Fact]
+    public async Task AddFilesAsync_PathsGivenAsByAnotherApplication_TakesTheFirstAsTheReference()
+    {
+        MainViewModel viewModel = Create();
+
+        await viewModel.AddFilesAsync([Path.Combine(RepositoryFiles.Samples, "run-good.csv"), Path.Combine(RepositoryFiles.Samples, "model.csv")]);
+
+        viewModel.Reference!.Name.Should().Be("run-good.csv");
+        Item(viewModel, "model.csv").VerdictText.Should().Be("✓ Follows the reference within 2.00 m");
+    }
+
     [Fact]
     public async Task ToleranceText_RaisedPastTheDetour_ClearsItsIssuesWithoutRefitting()
     {
