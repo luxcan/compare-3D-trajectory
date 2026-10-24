@@ -37,6 +37,10 @@ public partial class App : Application
         }
 
         MainWindow.Show();
+
+        // Once the window is up and idle, the published exe clears what older builds unpacked. Begun
+        // with BeginInvoke, so a failure other than a folder in use reaches the handler below.
+        Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(UnpackedLibraries.ClearOtherBuilds));
     }
 
     /// <summary>

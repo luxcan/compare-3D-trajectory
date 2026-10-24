@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Compare3DTrajectory.App.Files;
@@ -34,21 +35,29 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The smallest box an issue is framed in, so a one-point issue does not fill the screen.</summary>
     private const double MinimumFocusSize = 20;
 
+    /// <summary>How long reading or comparing goes on before the Loading card shows, so a quick one never flashes it.</summary>
+    private static readonly TimeSpan LoadingCardDelay = TimeSpan.FromMilliseconds(300);
+
     private readonly IFileDialogService _fileDialog;
     private readonly IConfirmationService _confirmation;
     private readonly ISettingsStore _settingsStore;
     private readonly PlotPalette _palette;
     private readonly ComparisonEngine _engine = new();
     private readonly WorkingFrame _frame = new();
+    private readonly SceneCache _sceneCache = new();
 
     private CancellationTokenSource? _comparison;
     private int _nextColour;
     private string? _lastFolder;
     private bool _rebuildingIssues;
 
-    /// <summary>Reading and comparing overlap, so the busy indicator stays on while either is under way.</summary>
+    /// <summary>Reading, comparing and redrawing overlap, so the busy indicator stays on while any is under way.</summary>
     private int _readsInProgress;
     private bool _comparing;
+    private bool _redrawPending;
+
+    /// <summary>Counts the stretches of being busy, so a wait begun in one that has since ended shows no card.</summary>
+    private int _busyStretch;
 
     /// <summary>The reference the runs' results were measured against; results against any other are stale.</summary>
     private TrajectoryItemViewModel? _resultsReference;
@@ -74,6 +83,11 @@ public sealed partial class MainViewModel : ObservableObject
         _selectedColourMode = ColourModeOption.For(settings.ColourMode);
         _lastFolder = settings.LastFolder;
         _statusText = EmptyStatus;
+
+        // Background priority comes after the layout and render already queued on the window's
+        // dispatcher, the one this view model is made on.
+        Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+        WaitForPaint = () => dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background).Task;
     }
 
     /// <summary>Asks the view to frame one issue.</summary>
@@ -106,8 +120,27 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The comparison most recently started, so a caller can wait for the results.</summary>
     public Task CurrentComparison { get; private set; } = Task.CompletedTask;
 
+    /// <summary>The redraw most recently put off until the Loading card is on screen, so a caller can wait for it.</summary>
+    public Task CurrentRedraw { get; private set; } = Task.CompletedTask;
+
     /// <summary>Reads one file; the loader, unless a test needs a read that fails or waits.</summary>
     internal Func<string, FileLoadResult> LoadFile { get; init; } = TrajectoryFileLoader.Load;
+
+    /// <summary>
+    /// Waits until the window has painted what it shows now, such as the busy overlay. Tests, with no
+    /// window and no running dispatcher, replace it.
+    /// </summary>
+    internal Func<Task> WaitForPaint { get; init; }
+
+    /// <summary>Waits a while: <see cref="Task.Delay(TimeSpan)"/>, unless a test needs to say when the time is up.</summary>
+    internal Func<TimeSpan, Task> Delay { get; init; } = Task.Delay;
+
+    /// <summary>
+    /// Showing a file of at least this many points builds its whole line on the window's thread for
+    /// long enough to paint the Loading card first. Smaller files, and hiding, redraw at once: a
+    /// million points was measured drawing in about 50 ms, too quick for a card to be more than a flash.
+    /// </summary>
+    internal int LargeFilePoints { get; init; } = 2_000_000;
 
     [ObservableProperty]
     private string _toleranceText;
@@ -141,6 +174,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isBusy;
+
+    /// <summary>
+    /// Whether the Loading card is up: at once for a redraw that holds the window, and only once
+    /// reading or comparing has gone on for <see cref="LoadingCardDelay"/>.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isLoadingShown;
 
     [ObservableProperty]
     private string _statusText;
@@ -289,7 +329,34 @@ public sealed partial class MainViewModel : ObservableObject
         while (waited != CurrentComparison);
     }
 
-    private void UpdateBusy() => IsBusy = _readsInProgress > 0 || _comparing;
+    private void UpdateBusy()
+    {
+        bool wasBusy = IsBusy;
+        IsBusy = _readsInProgress > 0 || _comparing || _redrawPending;
+        if (!IsBusy)
+        {
+            _busyStretch++;
+            IsLoadingShown = false;
+        }
+        else if (_redrawPending)
+        {
+            IsLoadingShown = true;
+        }
+        else if (!wasBusy)
+        {
+            _ = ShowLoadingCardIfStillBusyAsync(_busyStretch);
+        }
+    }
+
+    /// <summary>Shows the Loading card once reading or comparing has gone on for a while.</summary>
+    private async Task ShowLoadingCardIfStillBusyAsync(int stretch)
+    {
+        await Delay(LoadingCardDelay);
+        if (stretch == _busyStretch && IsBusy)
+        {
+            IsLoadingShown = true;
+        }
+    }
 
     [RelayCommand]
     private async Task AddFiles()
@@ -351,7 +418,7 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             RebuildIssuesAndScene();
-            UpdateStatus();
+            UpdateStatusUnlessComparing();
         }
     }
 
@@ -478,12 +545,59 @@ public sealed partial class MainViewModel : ObservableObject
         switch (e.PropertyName)
         {
             case nameof(TrajectoryItemViewModel.IsVisible):
-                RebuildIssuesAndScene();
-                UpdateStatus();
+                RedrawForShownOrHidden(item);
                 break;
             case nameof(TrajectoryItemViewModel.IsReference) when item.IsReference && item != Reference:
                 Reference = item;
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Hiding a file, or showing a small one, redraws at once: the 3D view keeps every line that has
+    /// not changed, so that is quick. Showing a large file builds its whole line, so the Loading card
+    /// is painted first, and files shown or hidden while that redraw waits are drawn by it too.
+    /// </summary>
+    private void RedrawForShownOrHidden(TrajectoryItemViewModel item)
+    {
+        if (_redrawPending)
+        {
+            return;
+        }
+
+        if (item.IsVisible && item.DrawnPoints.Count >= LargeFilePoints)
+        {
+            CurrentRedraw = RedrawOncePaintedAsync();
+            return;
+        }
+
+        RebuildIssuesAndScene();
+        UpdateStatusUnlessComparing();
+    }
+
+    /// <summary>
+    /// Redraws once the Loading card is on screen. Drawing holds the window's thread, so a redraw
+    /// started at once would be over before the card could ever be painted.
+    /// </summary>
+    /// <remarks>Like a comparison, this is fire-and-forget, so a failure is shown here rather than lost in the task.</remarks>
+    private async Task RedrawOncePaintedAsync()
+    {
+        _redrawPending = true;
+        UpdateBusy();
+        try
+        {
+            await WaitForPaint();
+            RebuildIssuesAndScene();
+            UpdateStatusUnlessComparing();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            StatusText = $"Showing or hiding a file could not be finished: {exception.Message}";
+        }
+        finally
+        {
+            _redrawPending = false;
+            UpdateBusy();
         }
     }
 
@@ -664,7 +778,9 @@ public sealed partial class MainViewModel : ObservableObject
         // one is shown here rather than left to escape as a crash.
         try
         {
-            Scene = SceneBuilder.Build(trajectories, issues, SelectedColourMode.Mode, Tolerance, _palette);
+            // Centred on the reference whether or not it is shown, so hiding it never moves the drawing.
+            Vec3? centre = Reference is { DrawnPoints.Count: > 0 } reference ? Vec3.Centroid(reference.DrawnPoints) : null;
+            Scene = SceneBuilder.Build(trajectories, issues, SelectedColourMode.Mode, Tolerance, _palette, centre, _sceneCache);
         }
         catch (Exception exception)
         {
@@ -724,6 +840,18 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         StatusText = text.ToString();
+    }
+
+    /// <summary>
+    /// The status after a redraw, unless runs are being compared: the status bar says so until the
+    /// comparison ends and sets the status itself, rather than a count of runs not compared yet.
+    /// </summary>
+    private void UpdateStatusUnlessComparing()
+    {
+        if (!_comparing)
+        {
+            UpdateStatus();
+        }
     }
 
     /// <summary>A failure is shown at once, and stays in the status bar until a save succeeds.</summary>

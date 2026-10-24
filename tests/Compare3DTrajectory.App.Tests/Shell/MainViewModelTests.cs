@@ -145,10 +145,166 @@ public sealed class MainViewModelTests : IDisposable
         int linesBefore = viewModel.Scene.Lines.Count(line => line.Describe is not null);
 
         Item(viewModel, "run-detour.csv").IsVisible = false;
+        await viewModel.CurrentRedraw;
 
         viewModel.Issues.Should().OnlyContain(row => row.FileName != "run-detour.csv");
         viewModel.Scene.Lines.Count(line => line.Describe is not null).Should().Be(linesBefore - 1);
     }
+
+    /// <summary>
+    /// Seen on screen: with the reference hidden, the stretches the runs missed, which are pieces of
+    /// it, were still drawn where it had been.
+    /// </summary>
+    [Fact]
+    public async Task IsVisible_ReferenceHidden_DrawsNothingAlongIt()
+    {
+        PlotPalette palette = TestPalette.Create();
+        MainViewModel viewModel = await LoadedSamples();
+        viewModel.Scene.Lines.Should().Contain(line => line.Colour == palette.Missed, "two of the runs each miss a stretch of the reference");
+        Vec3 centre = viewModel.Scene.RenderOrigin;
+        var runPositions = viewModel.Scene.Lines.First(line => line.Describe is not null && !line.IsOverlay).Positions;
+
+        viewModel.Reference!.IsVisible = false;
+        await viewModel.CurrentRedraw;
+
+        viewModel.Scene.Lines.Should().NotContain(line => line.Colour == palette.Reference || line.Colour == palette.Missed);
+        viewModel.Scene.Markers.Should().NotContain(marker => marker.Colour == palette.Reference);
+        viewModel.Scene.Labels.Should().HaveCount(2, "only the detours' numbers lie on the runs still shown");
+        viewModel.Scene.RenderOrigin.Should().Be(centre, "hiding the reference must not move the drawing");
+        viewModel.Scene.Lines.First(line => line.Describe is not null).Positions
+            .Should().BeSameAs(runPositions, "a run left as it was keeps its line in the view, not one built again");
+        viewModel.Issues.Should().HaveCount(4, "the runs are still shown, so what they did wrong is still listed");
+    }
+
+    /// <summary>Showing or hiding a file while runs were compared replaced "Comparing…" with a count of none.</summary>
+    [Fact]
+    public void IsVisible_ChangedWhileComparing_KeepsSayingComparingUntilItEnds() => SingleThreadedContext.Run(async () =>
+    {
+        MainViewModel viewModel = await LoadedSamples();
+
+        Item(viewModel, "run-good.csv").IsReference = true;
+        Item(viewModel, "run-detour.csv").IsVisible = false;
+
+        viewModel.StatusText.Should().StartWith("Comparing ");
+        viewModel.IsBusy.Should().BeTrue();
+        await viewModel.CurrentComparison;
+        viewModel.StatusText.Should().StartWith("Reference run-good.csv · 4 runs compared");
+        viewModel.IsBusy.Should().BeFalse();
+    });
+
+    /// <summary>The 3D view keeps every line it already has, so hiding a file, or showing a small one, needs no card.</summary>
+    [Fact]
+    public async Task IsVisible_FileHiddenThenShown_RedrawsAtOnceWithoutTheCard()
+    {
+        int waits = 0;
+        MainViewModel viewModel = Create(waitForPaint: () =>
+        {
+            waits++;
+            return Task.CompletedTask;
+        });
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        int lines = viewModel.Scene.Lines.Count(line => line.Describe is not null);
+
+        Item(viewModel, "run-detour.csv").IsVisible = false;
+        viewModel.Scene.Lines.Count(line => line.Describe is not null).Should().Be(lines - 1);
+        Item(viewModel, "run-detour.csv").IsVisible = true;
+
+        viewModel.Scene.Lines.Count(line => line.Describe is not null).Should().Be(lines);
+        waits.Should().Be(0);
+        viewModel.IsLoadingShown.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Showing a large file builds its whole line on the window's thread, so the Loading card is
+    /// painted first, and files shown or hidden meanwhile share the one redraw.
+    /// </summary>
+    [Fact]
+    public async Task IsVisible_LargeFilesShown_PaintTheCardFirstThenRedrawOnce()
+    {
+        TaskCompletionSource? painted = null;
+        int waits = 0;
+        MainViewModel viewModel = Create(
+            largeFilePoints: 1000,
+            waitForPaint: () =>
+            {
+                waits++;
+                return painted?.Task ?? Task.CompletedTask;
+            });
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        int lines = viewModel.Scene.Lines.Count(line => line.Describe is not null);
+        Item(viewModel, "run-detour.csv").IsVisible = false;
+        Item(viewModel, "run-good.csv").IsVisible = false;
+        SceneModel hidden = viewModel.Scene;
+        painted = new TaskCompletionSource();
+
+        Item(viewModel, "run-detour.csv").IsVisible = true;
+        Item(viewModel, "run-good.csv").IsVisible = true;
+
+        viewModel.IsLoadingShown.Should().BeTrue();
+        viewModel.Scene.Should().BeSameAs(hidden, "nothing is redrawn until the card is on screen");
+
+        painted.SetResult();
+        await viewModel.CurrentRedraw;
+
+        waits.Should().Be(1, "hiding redrew at once, and the two files shown share one redraw");
+        viewModel.Scene.Lines.Count(line => line.Describe is not null).Should().Be(lines);
+        viewModel.IsLoadingShown.Should().BeFalse();
+        viewModel.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsVisible_RedrawFails_SaysSoAndIsNoLongerBusy()
+    {
+        bool fail = false;
+        MainViewModel viewModel = Create(
+            largeFilePoints: 1000,
+            waitForPaint: () => fail ? Task.FromException(new InvalidOperationException("The window is gone.")) : Task.CompletedTask);
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        Item(viewModel, "run-detour.csv").IsVisible = false;
+        fail = true;
+
+        Item(viewModel, "run-detour.csv").IsVisible = true;
+        await viewModel.CurrentRedraw;
+
+        viewModel.StatusText.Should().Be("Showing or hiding a file could not be finished: The window is gone.");
+        viewModel.IsBusy.Should().BeFalse();
+        viewModel.IsLoadingShown.Should().BeFalse();
+    }
+
+    /// <summary>The Loading card flashed over the view at every keystroke of a new tolerance.</summary>
+    [Fact]
+    public void IsLoadingShown_ComparisonQuickerThanTheDelay_NeverShowsTheCard() => SingleThreadedContext.Run(async () =>
+    {
+        var delays = new List<TaskCompletionSource>();
+        MainViewModel viewModel = Create(delay: _ => Waited(delays));
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        bool shown = false;
+        viewModel.PropertyChanged += (_, e) => shown |= e.PropertyName == nameof(MainViewModel.IsLoadingShown) && viewModel.IsLoadingShown;
+
+        viewModel.ToleranceText = "3";
+        await viewModel.CurrentComparison;
+        delays.ForEach(delay => delay.SetResult());
+        await Task.Yield();
+
+        shown.Should().BeFalse();
+    });
+
+    [Fact]
+    public void IsLoadingShown_ComparisonOutlastsTheDelay_ShowsTheCardUntilItEnds() => SingleThreadedContext.Run(async () =>
+    {
+        var delays = new List<TaskCompletionSource>();
+        MainViewModel viewModel = Create(delay: _ => Waited(delays));
+        await viewModel.AddFilesAsync([RepositoryFiles.Samples]);
+        delays.Clear();
+
+        Item(viewModel, "run-good.csv").IsReference = true;
+        delays.Should().ContainSingle().Which.SetResult();
+        await Task.Yield();
+
+        viewModel.IsLoadingShown.Should().BeTrue("the comparison is still running once the delay is over");
+        await viewModel.CurrentComparison;
+        viewModel.IsLoadingShown.Should().BeFalse();
+    });
 
     [Fact]
     public async Task SelectedIssue_Chosen_AsksTheViewToFrameIt()
@@ -592,11 +748,22 @@ public sealed class MainViewModelTests : IDisposable
         return viewModel;
     }
 
+    /// <summary>A wait that ends only when the test says so, through the source it adds to <paramref name="delays"/>.</summary>
+    private static Task Waited(List<TaskCompletionSource> delays)
+    {
+        var delay = new TaskCompletionSource();
+        delays.Add(delay);
+        return delay.Task;
+    }
+
     private static MainViewModel Create(
         StubFileDialog? dialog = null,
         StubConfirmation? confirmation = null,
         MemorySettingsStore? store = null,
-        Func<string, FileLoadResult>? load = null) =>
+        Func<string, FileLoadResult>? load = null,
+        Func<Task>? waitForPaint = null,
+        int? largeFilePoints = null,
+        Func<TimeSpan, Task>? delay = null) =>
         new(
             dialog ?? new StubFileDialog(),
             confirmation ?? new StubConfirmation(answer: true),
@@ -604,5 +771,12 @@ public sealed class MainViewModelTests : IDisposable
             TestPalette.Create())
         {
             LoadFile = load ?? TrajectoryFileLoader.Load,
+
+            // The window's own wait needs a running dispatcher, which a test does not have.
+            WaitForPaint = waitForPaint ?? (() => Task.CompletedTask),
+
+            // Unless a test says otherwise, every file is small and the card's delay never ends.
+            LargeFilePoints = largeFilePoints ?? int.MaxValue,
+            Delay = delay ?? (_ => new TaskCompletionSource().Task),
         };
 }

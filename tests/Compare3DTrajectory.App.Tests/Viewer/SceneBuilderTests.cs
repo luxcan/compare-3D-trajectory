@@ -84,6 +84,51 @@ public class SceneBuilderTests
         scene.Labels[0].Position.Should().Be(new Vector3(-10, 0, 0));
     }
 
+    /// <summary>Seen on screen: with the reference hidden, the stretches the runs missed, and their numbers, still traced it.</summary>
+    [Fact]
+    public void Build_ReferenceHidden_DrawsAMissedStretchOnlyOnceItIsPicked()
+    {
+        var missed = new TrajectoryIssue(IssueKind.Missed, 0, 1, 10, 5, ReferencePoints[0], ReferencePoints[..2]);
+        var detour = new TrajectoryIssue(IssueKind.Detour, 1, 2, 10, 4, ReferencePoints[1], ReferencePoints[1..]);
+
+        SceneModel hidden = SceneBuilder.Build(
+            [Run([0.5, 3, 9])], [new SceneIssue(1, missed, IsSelected: false), new SceneIssue(2, detour, IsSelected: false)], ColourMode.Deviation, 2, Palette);
+        SceneModel picked = SceneBuilder.Build([Run([0.5, 3, 9])], [new SceneIssue(1, missed, IsSelected: true)], ColourMode.Deviation, 2, Palette);
+
+        hidden.Lines.Should().NotContain(line => line.Colour == Palette.Missed);
+        hidden.Labels.Select(label => label.Text).Should().Equal("2");
+        picked.Lines.Should().Contain(line => line.Colour == Palette.Highlight);
+        picked.Labels.Select(label => label.Text).Should().Equal("1");
+    }
+
+    /// <summary>The 3D view keeps a line only when it gets the very same arrays again, so an unchanged trajectory must.</summary>
+    [Fact]
+    public void Build_SameTrajectoryWithTheSameCache_HandsBackTheSameLine()
+    {
+        var cache = new SceneCache();
+        SceneTrajectory run = Run([0.5, 3, 9]);
+        SceneLine RunLine(double tolerance) => SceneBuilder.Build([Reference(), run], [], ColourMode.Deviation, tolerance, Palette, cache: cache)
+            .Lines.First(line => line.Describe is not null);
+
+        SceneLine first = RunLine(2);
+        SceneLine again = RunLine(2);
+        SceneLine wider = RunLine(5);
+
+        again.Should().Be(first);
+        again.Positions.Should().BeSameAs(first.Positions);
+        wider.Positions.Should().BeSameAs(first.Positions, "a new tolerance recolours the run, it does not move it");
+        wider.VertexColours.Should().NotBeSameAs(first.VertexColours);
+    }
+
+    [Fact]
+    public void Build_CentreGiven_CentresOnItRatherThanOnWhatIsDrawn()
+    {
+        SceneModel scene = SceneBuilder.Build([Run([0, 0, 0])], [], ColourMode.Deviation, 2, Palette, centre: new Vec3(1000, 2000, 30));
+
+        scene.RenderOrigin.Should().Be(new Vec3(1000, 2000, 30));
+        scene.Lines.First(line => line.Describe is not null).Positions[0].Should().Be(Vector3.Zero);
+    }
+
     [Fact]
     public void Build_AnyScene_HasAGroundGridAtTheLowestPointAndStartAndEndMarkers()
     {

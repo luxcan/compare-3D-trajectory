@@ -58,6 +58,13 @@ public partial class TrajectoryViewport : UserControl
     private readonly TrailingThrottle _hover;
     private DefaultEffectsManager? _effects;
 
+    /// <summary>
+    /// Each trajectory's line by the arrays it was built from. A new scene that brings the same
+    /// arrays, as <see cref="SceneCache"/> does for a trajectory that has not changed, keeps the line
+    /// already on the GPU, so showing or hiding one file leaves every other file's line alone.
+    /// </summary>
+    private Dictionary<KeptLine, LineGeometryModel3D> _kept = [];
+
     public TrajectoryViewport()
     {
         InitializeComponent();
@@ -134,36 +141,59 @@ public partial class TrajectoryViewport : UserControl
         _effects = null;
     }
 
+    /// <summary>
+    /// Draws the scene. Trajectory lines it shares with the scene before are kept and only restyled;
+    /// the ground grid, issue marks, start and end dots and labels are small and drawn afresh.
+    /// </summary>
     private void Rebuild()
     {
-        SceneRoot.Children.Clear();
+        GroundLayer.Children.Clear();
+        MarkLayer.Children.Clear();
         _hoverable.Clear();
         HoverCard.Visibility = Visibility.Collapsed;
         SceneModel scene = Scene;
+        var kept = new Dictionary<KeptLine, LineGeometryModel3D>();
 
         // A line needs two positions; the grid has none when the scene's extent is too large to draw one.
         foreach (SceneLine line in scene.Lines.Where(line => line.Positions.Count >= 2))
         {
-            var model = new LineGeometryModel3D
+            if (line.Describe is null)
             {
-                Geometry = LineGeometry(line),
-                Color = line.VertexColours is null ? line.Colour : Colors.White,
-                Thickness = line.Thickness,
-                Smoothness = 0.6,
-                IsHitTestVisible = line.Describe is not null,
-                HitTestThickness = HoverHitThickness,
-                DepthBias = line.IsOverlay ? OverlayDepthBias : 0,
-            };
-            SceneRoot.Children.Add(model);
-            if (line.Describe is not null)
-            {
-                _hoverable[model] = line;
+                (line.IsSegments ? GroundLayer : MarkLayer).Children.Add(NewLine(line));
+                continue;
             }
+
+            var key = new KeptLine(line.Positions, line.VertexColours, line.IsOverlay, Occurrence: 0);
+            while (kept.ContainsKey(key))
+            {
+                key = key with { Occurrence = key.Occurrence + 1 };
+            }
+
+            if (_kept.Remove(key, out LineGeometryModel3D? model))
+            {
+                Restyle(model, line);
+            }
+            else
+            {
+                model = NewLine(line);
+                (line.IsOverlay ? ReferenceLayer : RunLayer).Children.Add(model);
+            }
+
+            kept[key] = model;
+            _hoverable[model] = line;
         }
+
+        foreach (LineGeometryModel3D gone in _kept.Values)
+        {
+            RunLayer.Children.Remove(gone);
+            ReferenceLayer.Children.Remove(gone);
+        }
+
+        _kept = kept;
 
         foreach (SceneMarker marker in scene.Markers)
         {
-            SceneRoot.Children.Add(new PointGeometryModel3D
+            MarkLayer.Children.Add(new PointGeometryModel3D
             {
                 Geometry = new PointGeometry3D { Positions = new Vector3Collection([marker.Position]) },
                 Color = marker.Colour,
@@ -186,8 +216,24 @@ public partial class TrajectoryViewport : UserControl
                 });
             }
 
-            SceneRoot.Children.Add(new BillboardTextModel3D { Geometry = text, FixedSize = true, IsHitTestVisible = false });
+            MarkLayer.Children.Add(new BillboardTextModel3D { Geometry = text, FixedSize = true, IsHitTestVisible = false });
         }
+    }
+
+    private static LineGeometryModel3D NewLine(SceneLine line)
+    {
+        var model = new LineGeometryModel3D { Geometry = LineGeometry(line), Smoothness = 0.6, HitTestThickness = HoverHitThickness };
+        Restyle(model, line);
+        return model;
+    }
+
+    /// <summary>Everything about a line that can change without building its geometry again.</summary>
+    private static void Restyle(LineGeometryModel3D model, SceneLine line)
+    {
+        model.Color = line.VertexColours is null ? line.Colour : Colors.White;
+        model.Thickness = line.Thickness;
+        model.IsHitTestVisible = line.Describe is not null;
+        model.DepthBias = line.IsOverlay ? OverlayDepthBias : 0;
     }
 
     private static LineGeometry3D LineGeometry(SceneLine line)
@@ -263,4 +309,10 @@ public partial class TrajectoryViewport : UserControl
     }
 
     private static Color4 ToColor4(Color colour) => new(colour.R / 255f, colour.G / 255f, colour.B / 255f, colour.A / 255f);
+
+    /// <summary>
+    /// What a kept line was built from. The lists compare by reference, so only the very same arrays
+    /// match, and Occurrence tells apart two lines that happen to share them.
+    /// </summary>
+    private readonly record struct KeptLine(IReadOnlyList<Vector3> Positions, IReadOnlyList<Color>? VertexColours, bool IsOverlay, int Occurrence);
 }

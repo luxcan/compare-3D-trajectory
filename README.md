@@ -68,17 +68,18 @@ off to compare positions exactly as recorded.
 Drop files or whole folders onto the window, use **Add files…**, or pass paths on the command line.
 `samples/` holds a model and four runs with known faults to try it on.
 
-## Install
+## Build an executable
 
 ```powershell
-.\tools\install.ps1
+dotnet publish src/Compare3DTrajectory.App -p:PublishProfile=win-x64
 ```
 
-Publishes a single self-contained `Compare3DTrajectory.exe` (no .NET install needed) to
-`%LOCALAPPDATA%\Programs\Compare3DTrajectory` and adds **Compare 3D Trajectory** to the Start menu.
-It runs in Windows PowerShell 5.1 as well as PowerShell 7. A new build replaces the installed one
-only once its publish has succeeded. `-Uninstall` removes it again, with the native libraries it
-unpacks into `%TEMP%`. Settings are kept in `%LOCALAPPDATA%\Compare3DTrajectory`.
+Builds a single self-contained `Compare3DTrajectory.exe` (no .NET install needed) in
+`src\Compare3DTrajectory.App\bin\publish\win-x64`. Nothing is installed: run it from there. The first
+time each build runs, it unpacks its native libraries into `%TEMP%\.net\Compare3DTrajectory`, one
+folder per build, and clears the folders of other builds as it starts, leaving any that a copy
+still running is using. Settings are kept in
+`%LOCALAPPDATA%\Compare3DTrajectory`.
 
 ## Use from another .NET application
 
@@ -100,9 +101,15 @@ if (!report.Passed)
 ```
 
 A file that gives no trajectory throws `TrajectoryFileException`; one of numbers without a header
-throws it with the same "Please add in the header for x, y, z" message the window shows. To let
-someone look, start the window with the same paths, reference first:
-`Compare3DTrajectory.exe reference.csv run.csv`.
+throws it with the same "Please add in the header for x, y, z" message the window shows.
+
+To let someone look, also reference `src/Compare3DTrajectory.App` (your project must target
+`net10.0-windows`). Building yours then puts `Compare3DTrajectory.exe` beside your own executable,
+in Debug and Release alike, so start it from there with the same paths, reference first:
+
+```csharp
+Process.Start(Path.Combine(AppContext.BaseDirectory, "Compare3DTrajectory.exe"), [referencePath, runPath]);
+```
 
 ## Develop
 

@@ -4,9 +4,9 @@ using Compare3DTrajectory.App.Viewer;
 namespace Compare3DTrajectory.App.Shell;
 
 /// <summary>
-/// Code-behind is limited to drag-and-drop, the title bar and passing the view model's framing
-/// requests to the 3D view, none of which has a clean binding equivalent. Everything else goes
-/// through <see cref="MainViewModel"/>.
+/// Code-behind is limited to drag-and-drop, the title bar, opening the About window and passing the
+/// view model's framing requests to the 3D view, none of which has a clean binding equivalent.
+/// Everything else goes through <see cref="MainViewModel"/>.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -40,6 +40,8 @@ public partial class MainWindow : Window
     private void OnFocusRequested(object? sender, FocusRequestedEventArgs e) => Viewport.FocusOn(e.Min, e.Max);
 
     private void OnFitViewRequested(object? sender, EventArgs e) => Viewport.FitAll();
+
+    private void OnAboutRequested(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
 
     private void OnDragOver(object sender, DragEventArgs e)
     {

@@ -31,12 +31,23 @@ public static class SceneBuilder
     /// <summary>How many grid squares the ground reaches to each side of the scene's middle, at the least.</summary>
     private const int GridReach = 2;
 
+    /// <summary>
+    /// The scene for the trajectories and issues shown, centred on <paramref name="centre"/> in working
+    /// metres when given: the reference's middle even while it is hidden, so hiding it never moves what
+    /// is on screen. Without one it centres on the reference drawn, or else on the first trajectory.
+    /// </summary>
+    /// <remarks>
+    /// With the same <paramref name="cache"/> each time, a trajectory that has not changed gets the
+    /// same position and colour arrays, so its line is equal to the one drawn before.
+    /// </remarks>
     public static SceneModel Build(
         IReadOnlyList<SceneTrajectory> trajectories,
         IReadOnlyList<SceneIssue> issues,
         ColourMode mode,
         double tolerance,
-        PlotPalette palette)
+        PlotPalette palette,
+        Vec3? centre = null,
+        SceneCache? cache = null)
     {
         ArgumentNullException.ThrowIfNull(trajectories);
         ArgumentNullException.ThrowIfNull(issues);
@@ -47,18 +58,21 @@ public static class SceneBuilder
             return SceneModel.Empty;
         }
 
-        SceneTrajectory anchor = trajectories.FirstOrDefault(trajectory => trajectory.IsReference) ?? trajectories[0];
-        var scene = new SceneModel(Vec3.Centroid(anchor.Points), [], [], [], 0);
+        cache ??= new SceneCache();
+        SceneTrajectory? reference = trajectories.FirstOrDefault(trajectory => trajectory.IsReference);
+        var scene = new SceneModel(centre ?? Vec3.Centroid((reference ?? trajectories[0]).Points), [], [], [], 0);
         var lines = new List<SceneLine>();
         var markers = new List<SceneMarker>();
         var labels = new List<SceneLabel>();
+        RenderBox box = RenderBox.Empty;
 
         foreach (SceneTrajectory trajectory in trajectories.OrderBy(trajectory => trajectory.IsReference))
         {
-            Vector3[] positions = [.. trajectory.Points.Select(scene.ToRender)];
+            (Vector3[] positions, RenderBox trajectoryBox) = cache.Place(trajectory.Points, scene);
+            box = box.Including(trajectoryBox);
             Color colour = trajectory.IsReference ? palette.Reference : trajectory.FileColour;
             IReadOnlyList<Color>? vertexColours = !trajectory.IsReference && mode == ColourMode.Deviation && trajectory.Deviations is { } deviations
-                ? [.. deviations.Select(deviation => palette.ForDeviation(deviation, tolerance))]
+                ? cache.Band(deviations, tolerance, palette)
                 : null;
             double thickness = (trajectory.IsReference ? ReferenceThickness : RunThickness)
                 + (trajectory.IsSelected ? SelectedExtraThickness : 0);
@@ -73,8 +87,18 @@ public static class SceneBuilder
         foreach (SceneIssue sceneIssue in issues)
         {
             TrajectoryIssue issue = sceneIssue.Issue;
+
+            // A missed stretch and its number lie on the reference, so a hidden reference takes them
+            // with it; drawn on their own they still traced where it had been. One picked from the
+            // list is still shown, since that is a request to see it.
+            if (issue.Kind == IssueKind.Missed && reference is null && !sceneIssue.IsSelected)
+            {
+                continue;
+            }
+
             Color colour = issue.Kind == IssueKind.Missed ? palette.Missed : palette.Beyond;
             Vector3[] path = [.. issue.Path.Select(scene.ToRender)];
+            box = box.Including(RenderBox.OfFinite(path));
             if (issue.Kind == IssueKind.Missed && path.Length > 1)
             {
                 lines.Add(new SceneLine(path, colour, null, MissedThickness, IsSegments: false, IsOverlay: true, null));
@@ -92,7 +116,7 @@ public static class SceneBuilder
                 sceneIssue.IsSelected ? palette.Highlight : colour));
         }
 
-        (SceneLine grid, double spacing) = GroundGrid(lines, palette.Grid);
+        (SceneLine grid, double spacing) = GroundGrid(box, palette.Grid);
         lines.Insert(0, grid);
 
         return scene with { Lines = lines, Markers = markers, Labels = labels, GridSpacing = spacing };
@@ -103,20 +127,14 @@ public static class SceneBuilder
     /// 1, 2 or 5 times a power of ten so the spacing is a number worth reading.
     /// </summary>
     /// <remarks>
-    /// Lines are counted rather than stepped to, and only finite positions set the extent: a point
-    /// beyond the range of float once made the loop step towards infinity, or stand still at a value
-    /// too large for one more step to change, until memory ran out. With no sensible extent there is
-    /// no grid.
+    /// Lines are counted rather than stepped to, and only finite positions set the extent (see
+    /// <see cref="RenderBox.OfFinite"/>): a point beyond the range of float once made the loop step
+    /// towards infinity, or stand still at a value too large for one more step to change, until
+    /// memory ran out. With no sensible extent there is no grid.
     /// </remarks>
-    private static (SceneLine Grid, double Spacing) GroundGrid(IReadOnlyList<SceneLine> lines, Color colour)
+    private static (SceneLine Grid, double Spacing) GroundGrid(RenderBox box, Color colour)
     {
-        Vector3 min = new(float.MaxValue);
-        Vector3 max = new(float.MinValue);
-        foreach (Vector3 position in lines.SelectMany(line => line.Positions).Where(IsFinite))
-        {
-            min = Vector3.Min(min, position);
-            max = Vector3.Max(max, position);
-        }
+        (Vector3 min, Vector3 max) = box;
 
         // A route running straight along an axis has no width across it; the grid still reaches a
         // couple of squares to either side, or every line across it would have no length.
@@ -130,7 +148,7 @@ public static class SceneBuilder
         double toY = Math.Ceiling(Math.Max(max.Y, middleY + reach) / spacing) * spacing;
         double columns = Math.Round((toX - fromX) / spacing);
         double rows = Math.Round((toY - fromY) / spacing);
-        if (!(min.X <= max.X && columns <= MaximumGridLines && rows <= MaximumGridLines))
+        if (box.IsEmpty || !(columns <= MaximumGridLines && rows <= MaximumGridLines))
         {
             return (new SceneLine([], colour, null, GridThickness, IsSegments: true, IsOverlay: false, null), 0);
         }
@@ -153,9 +171,6 @@ public static class SceneBuilder
 
         return (new SceneLine(segments, colour, null, GridThickness, IsSegments: true, IsOverlay: false, null), spacing);
     }
-
-    private static bool IsFinite(Vector3 position) =>
-        float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z);
 
     /// <summary><paramref name="rough"/> rounded to the nearest of 1, 2 or 5 × 10ⁿ.</summary>
     internal static double NiceStep(double rough)

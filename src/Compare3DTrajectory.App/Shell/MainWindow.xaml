@@ -305,6 +305,23 @@
                      IsHitTestVisible="False"
                      Visibility="{Binding HasTrajectories, Converter={StaticResource BoolToVisibility}}"
                      Text="Left-drag to turn · right-drag to move · wheel to zoom · double-click to centre" />
+
+          <!-- While files are read or compared for more than a moment, or a large file shown is drawn.
+               It never takes the pointer, so the view can still be turned underneath. -->
+          <Border HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Padding="22,14"
+                  Background="{DynamicResource SurfaceAltBackground}"
+                  BorderBrush="{DynamicResource Divider}"
+                  BorderThickness="1"
+                  CornerRadius="{DynamicResource ControlCornerRadius}"
+                  IsHitTestVisible="False"
+                  Visibility="{Binding IsLoadingShown, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+              <TextBlock Text="Loading…" FontWeight="SemiBold" HorizontalAlignment="Center" />
+              <ProgressBar Width="140" Margin="0,10,0,0" IsIndeterminate="True" />
+            </StackPanel>
+          </Border>
         </Grid>
 
         <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Rows" />
@@ -344,6 +361,32 @@
             BorderThickness="0,1,0,0"
             Padding="12,5">
       <DockPanel>
+        <!-- The design handoff's footer About button: a standard button at the far left, the only
+             way to the version. The window has no other strip to put it on, and a row of chrome to
+             hold one button is not worth its height. -->
+        <Button DockPanel.Dock="Left"
+                Content="About"
+                Style="{StaticResource SecondaryButton}"
+                MinWidth="0"
+                Padding="11,0,13,0"
+                Margin="0,0,12,0"
+                VerticalAlignment="Center"
+                Click="OnAboutRequested"
+                ToolTip="About Compare 3D Trajectory">
+          <Button.ContentTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE946;"
+                           FontFamily="{DynamicResource IconFontFamily}"
+                           FontSize="12"
+                           Foreground="{DynamicResource AccentBackground}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,7,0" />
+                <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+              </StackPanel>
+            </DataTemplate>
+          </Button.ContentTemplate>
+        </Button>
         <ProgressBar DockPanel.Dock="Left"
                      Width="90"
                      Margin="0,0,10,0"

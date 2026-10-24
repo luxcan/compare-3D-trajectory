@@ -44,7 +44,12 @@
         <MouseBinding Command="{x:Static hx:ViewportCommands.SetTarget}" Gesture="LeftDoubleClick" />
       </hx:Viewport3DX.InputBindings>
 
-      <hx:GroupModel3D x:Name="SceneRoot" />
+      <!-- Drawn in this order, so the reference's smoothed edges blend over the runs it lies on and
+           the issue marks over both. -->
+      <hx:GroupModel3D x:Name="GroundLayer" />
+      <hx:GroupModel3D x:Name="RunLayer" />
+      <hx:GroupModel3D x:Name="ReferenceLayer" />
+      <hx:GroupModel3D x:Name="MarkLayer" />
     </hx:Viewport3DX>
 
     <!-- Hover read-out. Drawn by WPF over the 3D surface rather than as a ToolTip, which would wait

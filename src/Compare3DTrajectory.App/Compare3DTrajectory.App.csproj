@@ -4,26 +4,22 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <!-- The installed executable is Compare3DTrajectory.exe; the ".App" suffix only names the project. -->
+    <!-- The executable is Compare3DTrajectory.exe; the ".App" suffix only names the project. -->
     <AssemblyName>Compare3DTrajectory</AssemblyName>
     <RootNamespace>Compare3DTrajectory.App</RootNamespace>
     <AssemblyTitle>Compare 3D Trajectory</AssemblyTitle>
+    <!-- Shown by Windows on the file, and by the About window under the version. -->
+    <Description>Checks simulation runs against the trajectory they were meant to follow, in 3D.</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <!-- Release builds are what tools\install.ps1 publishes: one self-contained file, so the machine
-       needs no .NET install. Not trimmed: WPF breaks under trimming. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <PublishTrimmed>false</PublishTrimmed>
-    <!-- The XML docs exist for IDE0005 at build time; nobody reads them next to an installed exe. -->
-    <PublishDocumentationFile>false</PublishDocumentationFile>
-    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
-  </PropertyGroup>
+  <ItemGroup>
+    <!-- The About window says when this build was made, and the assembly is the only thing that can
+         answer that truthfully: the version alone does not tell two builds of it apart. -->
+    <AssemblyMetadata Include="BuildDate" Value="$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd'))" />
+  </ItemGroup>
+
+  <!-- The single self-contained exe comes from Properties\PublishProfiles\win-x64.pubxml. -->
 
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
